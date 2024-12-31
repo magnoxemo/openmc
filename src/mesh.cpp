@@ -3125,22 +3125,42 @@ void LibMesh::set_score_data(const std::string& var_name,
 
   for (auto it = m_->local_elements_begin(); it != m_->local_elements_end();
        it++) {
-    auto bin = get_bin_from_element(*it);
-
-    // set value
-    vector<libMesh::dof_id_type> value_dof_indices;
-    dof_map.dof_indices(*it, value_dof_indices, value_num);
-    Ensures(value_dof_indices.size() == 1);
-    eqn_sys.solution->set(value_dof_indices[0], values.at(bin));
-
-    // set std dev
-    vector<libMesh::dof_id_type> std_dev_dof_indices;
-    dof_map.dof_indices(*it, std_dev_dof_indices, std_dev_num);
-    Ensures(std_dev_dof_indices.size() == 1);
-    eqn_sys.solution->set(std_dev_dof_indices[0], std_dev.at(bin));
+            if (it->refinement_flag()!=Elem::AMALGAMATE){
+              for (unsigned_int side = 0; side < it->n_sides(); ++side) {
+                const libMesh::Elem* neighbor = it->neighbor_ptr(side);
+                    auto bin = get_bin_from_element(*_neighbour);
+                    // set value
+                    vector<libMesh::dof_id_type> value_dof_indices;
+                    dof_map.dof_indices(*it, value_dof_indices, value_num);
+                    Ensures(value_dof_indices.size() == 1);
+                    eqn_sys.solution->set(value_dof_indices[0], values.at(bin));
+                    
+                    // set std dev
+                    vector<libMesh::dof_id_type> std_dev_dof_indices;
+                    dof_map.dof_indices(*it, std_dev_dof_indices, std_dev_num);
+                    Ensures(std_dev_dof_indices.size() == 1);
+                    eqn_sys.solution->set(std_dev_dof_indices[0], std_dev.at(bin));
+              }
+            }
+         
+    
+            auto bin = get_bin_from_element(*it);
+            // set value
+            vector<libMesh::dof_id_type> value_dof_indices;
+            dof_map.dof_indices(*it, value_dof_indices, value_num);
+            Ensures(value_dof_indices.size() == 1);
+            eqn_sys.solution->set(value_dof_indices[0], values.at(bin));
+        
+            // set std dev
+            vector<libMesh::dof_id_type> std_dev_dof_indices;
+            dof_map.dof_indices(*it, std_dev_dof_indices, std_dev_num);
+            Ensures(std_dev_dof_indices.size() == 1);
+            eqn_sys.solution->set(std_dev_dof_indices[0], std_dev.at(bin));
+              
   }
 }
-
+  
+            
 void LibMesh::write(const std::string& filename) const
 {
   write_message(fmt::format(
