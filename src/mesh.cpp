@@ -3179,7 +3179,7 @@ void LibMesh::set_score_data(const std::string& var_name,
 
   for (auto it = m_->local_elements_begin(); it != m_->local_elements_end(); it++) {
 
-  if (it->refinement_flag()!=Elem::AMALGAMATE && (!(*it)->active())){
+  if (it->refinement_flag()==Elem::AMALGAMATE && ((*it)->active())){
     for (unsigned_int side = 0; side < it->n_sides(); ++side) {
       const libMesh::Elem* neighbor = it->neighbor_ptr(side);
       auto bin = get_bin_from_element(*_neighbour);
@@ -3198,7 +3198,7 @@ void LibMesh::set_score_data(const std::string& var_name,
   }
 
 
-  if (!(*it)->active()){
+  if ((*it)->active()){
     auto bin = get_bin_from_element(*it);
     // set value
     vector<libMesh::dof_id_type> value_dof_indices;
