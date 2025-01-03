@@ -3186,13 +3186,13 @@ void LibMesh::set_score_data(const std::string& var_name,
         auto bin = get_bin_from_element(*_neighbour);
         // set value
         vector<libMesh::dof_id_type> value_dof_indices;
-        dof_map.dof_indices(*it, value_dof_indices, value_num);
+        dof_map.dof_indices(_neighbor, value_dof_indices, value_num);
         Ensures(value_dof_indices.size() == 1);
         eqn_sys.solution->set(value_dof_indices[0], values.at(bin));
 
         // set std dev
         vector<libMesh::dof_id_type> std_dev_dof_indices;E
-        dof_map.dof_indices(*it, std_dev_dof_indices, std_dev_num);
+        dof_map.dof_indices(_neighbor, std_dev_dof_indices, std_dev_num);
         Ensures(std_dev_dof_indices.size() == 1);
         eqn_sys.solution->set(std_dev_dof_indices[0], std_dev.at(bin));
       }
