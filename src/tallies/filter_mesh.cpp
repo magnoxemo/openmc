@@ -48,6 +48,38 @@ void MeshFilter::get_all_bins(
   }
 
   if (estimator != TallyEstimator::TRACKLENGTH) {
+    // Maybe this is the place to make the changes if
+    // we end up doing it on the fly
+
+    /*
+     * check if the element is marked for amalgamation
+     * Libmesh::get_bin(Position r)
+     * *elem=Libmesh::get_element_from_bin()
+     * if elem->refinement_flag()==Elem::AMALGAMATE
+     *
+     * create a vector for bin
+        for (unsigned int side = 0; side < elem->n_sides(); ++side) {
+          const libMesh::Elem* _neighbor = *it->neighbor_ptr(side);
+          if (_neighbor->refinement_flag()==Elem::AMALGAMATE)
+          {
+            add this bin
+            (get the element centroid from the libmesh)
+            make it a Position data
+            bin_pos.push_back(Positon_data)
+          }
+
+        iterate through all the bins
+        for (unsigned int i=0;i<std::len(bin_pos);i++)
+          auto bin = model::meshes[mesh_]->get_bin(bin_pos[i]);
+            if (bin >= 0) {
+              match.bins_.push_back(bin);
+              match.weights_.push_back(1.0);
+            }
+            } else {
+              model::meshes[mesh_]->bins_crossed(
+              last_r, r, u, match.bins_, match.weights_);
+          }
+     */
     auto bin = model::meshes[mesh_]->get_bin(r);
     if (bin >= 0) {
       match.bins_.push_back(bin);
