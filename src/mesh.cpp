@@ -3238,6 +3238,19 @@ LibMesh::LibMesh(libMesh::MeshBase& input_mesh, double length_multiplier)
   initialize();
 }
 
+LibMesh::LibMesh(libMesh::MeshBase& input_mesh,
+  const std::string& extra_element_integer_name, double length_multiplier)
+  : LibMesh::LibMesh(input_mesh, length_multiplier)
+{
+
+  extra_element_integer_index_ =
+    input_mesh.has_elem_integer(extra_element_integer_name)
+      ? input_mesh.get_elem_integer_index(extra_element_integer_name)
+      : -1;
+  mesh_tally_amalgamation_valid_ =
+    extra_element_integer_index_ == -1 ? false : true;
+}
+
 // create the mesh from an input file
 LibMesh::LibMesh(const std::string& filename, double length_multiplier)
   : adaptive_(false)
@@ -3526,8 +3539,20 @@ int LibMesh::get_bin(Position r) const
 
   const auto& point_locator = pl_.at(thread_num());
 
-  const auto elem_ptr = (*point_locator)(p);
-  return elem_ptr ? get_bin_from_element(elem_ptr) : -1;
+  const auto element = (*point_locator)(p);
+  if (element) {
+    if (mesh_tally_amalgamation_valid_) {
+      if (element->get_extra_integer(extra_element_integer_index_) != -1) {
+        // that means part of a cluster. Now return the first element in the
+        // cluster
+        auto first_element = mesh_ptr()->elem_ptr(
+          element->get_extra_integer(extra_element_integer_index_));
+        return first_element ? get_bin_from_element(first_element) : -1;
+      }
+    }
+    return get_bin_from_element(element);
+  }
+  return -1;
 }
 
 int LibMesh::get_bin_from_element(const libMesh::Elem* elem) const
