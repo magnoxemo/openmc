@@ -1034,6 +1034,13 @@ private:
 
   int extra_element_integer_index_ = -1 ;
   bool mesh_tally_amalgamation_valid_ = false ;
+
+  /*create a hash map where every element in a cluster would map to the first element of in that cluster
+   * if the element isn't part of a cluster then it will point to it self
+   * <any_element_in_a_cluster, first element in that cluster >
+   */
+  std::unordered_map<const libMesh::Elem*, const libMesh::Elem*> clustering_element_mapping_;
+
 };
 
 #endif

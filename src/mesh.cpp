@@ -3240,15 +3240,23 @@ LibMesh::LibMesh(libMesh::MeshBase& input_mesh, double length_multiplier)
 
 LibMesh::LibMesh(libMesh::MeshBase& input_mesh,
   const std::string& extra_element_integer_name, double length_multiplier)
-  : LibMesh::LibMesh(input_mesh, length_multiplier)
+  : adaptive_(input_mesh.n_active_elem() != input_mesh.n_elem())
 {
+  if (!dynamic_cast<libMesh::ReplicatedMesh*>(&input_mesh)) {
+    fatal_error("At present LibMesh tallies require a replicated mesh. Please "
+                "ensure 'input_mesh' is a libMesh::ReplicatedMesh.");
+  }
+
+  m_ = &input_mesh;
+  set_length_multiplier(length_multiplier);
 
   extra_element_integer_index_ =
     input_mesh.has_elem_integer(extra_element_integer_name)
       ? input_mesh.get_elem_integer_index(extra_element_integer_name)
       : -1;
-  mesh_tally_amalgamation_valid_ =
-    extra_element_integer_index_ == -1 ? false : true;
+  mesh_tally_amalgamation_valid_ = (extra_element_integer_index_ == -1) ? false : true;
+
+  initialize();
 }
 
 // create the mesh from an input file
@@ -3319,14 +3327,54 @@ void LibMesh::initialize()
   // contiguous in ID space, so we need to map from bin indices (defined over
   // active elements) to global dof ids
   if (adaptive_) {
+    //std::cout<<"maping eveything again\n";
     bin_to_elem_map_.reserve(m_->n_active_elem());
     elem_to_bin_map_.resize(m_->n_elem(), -1);
+
+    //clear the previous history
+    clustering_element_mapping_.clear();
+
+    //adding clustering map
     for (auto it = m_->active_elements_begin(); it != m_->active_elements_end();
-         it++) {
+      it++) {
       auto elem = *it;
 
+      if (elem->get_extra_integer(extra_element_integer_index_)!=-1 and mesh_tally_amalgamation_valid_) {
+        //get the first element
+        auto first_element_in_a_cluster = m_->elem_ptr(elem->get_extra_integer(extra_element_integer_index_));
+        if (first_element_in_a_cluster->active() and first_element_in_a_cluster)
+          clustering_element_mapping_.insert(std::make_pair(elem, first_element_in_a_cluster));
+        else
+          clustering_element_mapping_.insert(std::make_pair(elem, elem));
+      }
+      else{
+        clustering_element_mapping_.insert(std::make_pair(elem,elem));
+      }
       bin_to_elem_map_.push_back(elem->id());
       elem_to_bin_map_[elem->id()] = bin_to_elem_map_.size() - 1;
+    }
+  }
+  else{
+    //std::cout<<"maping eveything with no adaptivity \n";
+    //clear the previous history
+    clustering_element_mapping_.clear();
+
+    //adding clustering map
+    for (auto it = m_->active_elements_begin(); it != m_->active_elements_end();
+      it++) {
+      auto elem = *it;
+
+      if (elem->get_extra_integer(extra_element_integer_index_)!=-1 and mesh_tally_amalgamation_valid_) {
+        auto first_element_in_a_cluster = m_->elem_ptr(elem->get_extra_integer(extra_element_integer_index_));
+
+        if (first_element_in_a_cluster->active() and first_element_in_a_cluster)
+          clustering_element_mapping_.insert(std::make_pair(elem, first_element_in_a_cluster));
+        else
+          clustering_element_mapping_.insert(std::make_pair(elem, elem));
+      }
+      else
+        clustering_element_mapping_.insert(std::make_pair(elem,elem));
+
     }
   }
 
@@ -3481,7 +3529,7 @@ void LibMesh::set_score_data(const std::string& var_name,
   unsigned int std_dev_num = variable_map_.at(std_dev_name);
 
   for (auto it = m_->local_elements_begin(); it != m_->local_elements_end();
-       it++) {
+    it++) {
     if (!(*it)->active()) {
       continue;
     }
@@ -3538,21 +3586,9 @@ int LibMesh::get_bin(Position r) const
   }
 
   const auto& point_locator = pl_.at(thread_num());
-
   const auto element = (*point_locator)(p);
-  if (element) {
-    if (mesh_tally_amalgamation_valid_) {
-      if (element->get_extra_integer(extra_element_integer_index_) != -1) {
-        // that means part of a cluster. Now return the first element in the
-        // cluster
-        auto first_element = mesh_ptr()->elem_ptr(
-          element->get_extra_integer(extra_element_integer_index_));
-        return first_element ? get_bin_from_element(first_element) : -1;
-      }
-    }
-    return get_bin_from_element(element);
-  }
-  return -1;
+
+  return element? get_bin_from_element(clustering_element_mapping_.at(element)):-1;
 }
 
 int LibMesh::get_bin_from_element(const libMesh::Elem* elem) const
