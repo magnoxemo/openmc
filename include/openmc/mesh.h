@@ -1032,8 +1032,9 @@ private:
   std::vector<int> elem_to_bin_map_; //!< mapping dof indices to bin indices for
                                      //!< active elements
 
-  int extra_element_integer_index_ = -1 ;
-  bool mesh_tally_amalgamation_valid_ = false ;
+  int extra_element_integer_index_ = -1 ; //!< extra element interger index for element clustering
+  bool amalgamation_ = false ; //!< whether we are doing mesh and tally amalgamation
+                               //!< by default it's turned off.
 
   /*create a hash map where every element in a cluster would map to the first element of in that cluster
    * if the element isn't part of a cluster then it will point to it self

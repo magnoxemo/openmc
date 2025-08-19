@@ -3254,7 +3254,7 @@ LibMesh::LibMesh(libMesh::MeshBase& input_mesh,
     input_mesh.has_elem_integer(extra_element_integer_name)
       ? input_mesh.get_elem_integer_index(extra_element_integer_name)
       : -1;
-  mesh_tally_amalgamation_valid_ = (extra_element_integer_index_ == -1) ? false : true;
+  amalgamation_ = (extra_element_integer_index_ != -1);
 
   initialize();
 }
@@ -3327,54 +3327,30 @@ void LibMesh::initialize()
   // contiguous in ID space, so we need to map from bin indices (defined over
   // active elements) to global dof ids
   if (adaptive_) {
-    //std::cout<<"maping eveything again\n";
     bin_to_elem_map_.reserve(m_->n_active_elem());
     elem_to_bin_map_.resize(m_->n_elem(), -1);
 
-    //clear the previous history
-    clustering_element_mapping_.clear();
+    //reseve the hash map for cluster elements
+    clustering_element_mapping_.reserve(m_->n_active_elem());
 
     //adding clustering map
     for (auto it = m_->active_elements_begin(); it != m_->active_elements_end();
       it++) {
       auto elem = *it;
 
-      if (elem->get_extra_integer(extra_element_integer_index_)!=-1 and mesh_tally_amalgamation_valid_) {
-        //get the first element
-        auto first_element_in_a_cluster = m_->elem_ptr(elem->get_extra_integer(extra_element_integer_index_));
-        if (first_element_in_a_cluster->active() and first_element_in_a_cluster)
-          clustering_element_mapping_.insert(std::make_pair(elem, first_element_in_a_cluster));
-        else
-          clustering_element_mapping_.insert(std::make_pair(elem, elem));
+      if (amalgamation_) {
+        auto cluster_elem = elem;
+        unsigned int cluster_id = elem->get_extra_integer(extra_element_integer_index_);
+        if (cluster_id != -1) {
+          auto first_element_in_a_cluster = m_->elem_ptr(cluster_id);
+          if (first_element_in_a_cluster and first_element_in_a_cluster->active())
+            cluster_elem = first_element_in_a_cluster;
+        }
+        clustering_element_mapping_.insert(std::make_pair(elem, cluster_elem));
       }
-      else{
-        clustering_element_mapping_.insert(std::make_pair(elem,elem));
-      }
+
       bin_to_elem_map_.push_back(elem->id());
       elem_to_bin_map_[elem->id()] = bin_to_elem_map_.size() - 1;
-    }
-  }
-  else{
-    //std::cout<<"maping eveything with no adaptivity \n";
-    //clear the previous history
-    clustering_element_mapping_.clear();
-
-    //adding clustering map
-    for (auto it = m_->active_elements_begin(); it != m_->active_elements_end();
-      it++) {
-      auto elem = *it;
-
-      if (elem->get_extra_integer(extra_element_integer_index_)!=-1 and mesh_tally_amalgamation_valid_) {
-        auto first_element_in_a_cluster = m_->elem_ptr(elem->get_extra_integer(extra_element_integer_index_));
-
-        if (first_element_in_a_cluster->active() and first_element_in_a_cluster)
-          clustering_element_mapping_.insert(std::make_pair(elem, first_element_in_a_cluster));
-        else
-          clustering_element_mapping_.insert(std::make_pair(elem, elem));
-      }
-      else
-        clustering_element_mapping_.insert(std::make_pair(elem,elem));
-
     }
   }
 
@@ -3586,15 +3562,15 @@ int LibMesh::get_bin(Position r) const
   }
 
   const auto& point_locator = pl_.at(thread_num());
-  const auto element = (*point_locator)(p);
 
-  return element? get_bin_from_element(clustering_element_mapping_.at(element)):-1;
+  const auto elem_ptr = (*point_locator)(p);
+  return elem_ptr ? get_bin_from_element(elem_ptr) : -1;
 }
 
 int LibMesh::get_bin_from_element(const libMesh::Elem* elem) const
 {
   int bin =
-    adaptive_ ? elem_to_bin_map_[elem->id()] : elem->id() - first_element_id_;
+    adaptive_ ? elem_to_bin_map_[clustering_element_mapping_.at(elem)->id()] : elem->id() - first_element_id_;
   if (bin >= n_bins() || bin < 0) {
     fatal_error(fmt::format("Invalid bin: {}", bin));
   }
