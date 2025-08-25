@@ -3250,11 +3250,11 @@ LibMesh::LibMesh(libMesh::MeshBase& input_mesh,
   m_ = &input_mesh;
   set_length_multiplier(length_multiplier);
 
-  extra_element_integer_index_ =
+  cluster_element_integer_index_ =
     input_mesh.has_elem_integer(extra_element_integer_name)
       ? input_mesh.get_elem_integer_index(extra_element_integer_name)
       : -1;
-  amalgamation_ = (extra_element_integer_index_ != -1);
+  amalgamation_ = (cluster_element_integer_index_ != -1);
 
   initialize();
 }
@@ -3340,7 +3340,7 @@ void LibMesh::initialize()
 
       if (amalgamation_) {
         auto cluster_elem = elem;
-        unsigned int cluster_id = elem->get_extra_integer(extra_element_integer_index_);
+        unsigned int cluster_id = elem->get_extra_integer(cluster_element_integer_index_);
         if (cluster_id != -1) {
           auto first_element_in_a_cluster = m_->elem_ptr(cluster_id);
           if (first_element_in_a_cluster and first_element_in_a_cluster->active())
