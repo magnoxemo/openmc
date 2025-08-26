@@ -946,7 +946,7 @@ public:
   LibMesh(pugi::xml_node node);
   LibMesh(const std::string& filename, double length_multiplier = 1.0);
   LibMesh(libMesh::MeshBase& input_mesh, double length_multiplier = 1.0);
-  LibMesh(libMesh::MeshBase& input_mesh,const std::string& extra_element_integer_name, double length_multiplier = 1.0);
+  LibMesh(libMesh::MeshBase& input_mesh,const std::string& cluster_element_integer_name, double length_multiplier = 1.0);
 
   static const std::string mesh_lib_type;
 

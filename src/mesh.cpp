@@ -3239,7 +3239,7 @@ LibMesh::LibMesh(libMesh::MeshBase& input_mesh, double length_multiplier)
 }
 
 LibMesh::LibMesh(libMesh::MeshBase& input_mesh,
-  const std::string& extra_element_integer_name, double length_multiplier)
+  const std::string& cluster_element_integer_name, double length_multiplier)
   : adaptive_(input_mesh.n_active_elem() != input_mesh.n_elem())
 {
   if (!dynamic_cast<libMesh::ReplicatedMesh*>(&input_mesh)) {
@@ -3251,8 +3251,8 @@ LibMesh::LibMesh(libMesh::MeshBase& input_mesh,
   set_length_multiplier(length_multiplier);
 
   cluster_element_integer_index_ =
-    input_mesh.has_elem_integer(extra_element_integer_name)
-      ? input_mesh.get_elem_integer_index(extra_element_integer_name)
+    input_mesh.has_elem_integer(cluster_element_integer_name)
+      ? input_mesh.get_elem_integer_index(cluster_element_integer_name)
       : -1;
   amalgamation_ = (cluster_element_integer_index_ != -1);
 
@@ -3340,7 +3340,7 @@ void LibMesh::initialize()
 
       if (amalgamation_) {
         auto cluster_elem = elem;
-        unsigned int  p = elem->get_extra_integer(cluster_element_integer_index_);
+        unsigned int  cluster_id = elem->get_extra_integer(cluster_element_integer_index_);
         if (cluster_id != -1) {
           auto first_element_in_a_cluster = m_->elem_ptr(cluster_id);
           if (first_element_in_a_cluster and first_element_in_a_cluster->active())
