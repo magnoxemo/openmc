@@ -3569,8 +3569,9 @@ int LibMesh::get_bin(Position r) const
 
 int LibMesh::get_bin_from_element(const libMesh::Elem* elem) const
 {
-  int bin =
-    adaptive_ ? elem_to_bin_map_[clustering_element_mapping_.at(elem)->id()] : elem->id() - first_element_id_;
+  auto tally_elem = amalgamation_ ? clustering_element_mapping_.at(elem) : elem;
+  int bin = adaptive_ ? elem_to_bin_map_[tally_elem->id()] : tally_elem->id() - first_element_id_;
+
   if (bin >= n_bins() || bin < 0) {
     fatal_error(fmt::format("Invalid bin: {}", bin));
   }
