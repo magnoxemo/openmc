@@ -3239,11 +3239,12 @@ LibMesh::LibMesh(libMesh::MeshBase& input_mesh, double length_multiplier)
 }
 
 
-void LibMesh::set_mesh_tally_amalgamation(std::string cluster_element_integer_name){
+void
+LibMesh::set_mesh_tally_amalgamation(std::string cluster_element_integer_name){
 
-  cluster_element_integer_index_ = input_mesh.has_elem_integer(cluster_element_integer_name)
-      ? input_mesh.get_elem_integer_index(cluster_element_integer_name)
-      : -1;
+  cluster_element_integer_index_ = m_->has_elem_integer(cluster_element_integer_name)
+                                     ? m_->get_elem_integer_index(cluster_element_integer_name)
+                                     : -1;
   amalgamation_ = (cluster_element_integer_index_ != -1);
 
   //should we add a warning if amalgamation is false?
@@ -3256,7 +3257,8 @@ void LibMesh::set_mesh_tally_amalgamation(std::string cluster_element_integer_na
     //adding clustering map
     for (auto it = m_->active_elements_begin(); it != m_->active_elements_end(); it++) {
 
-      auto cluster_elem = *it;
+      auto elem = *it;
+      auto cluster_elem = elem;
       unsigned int  cluster_id = elem->get_extra_integer(cluster_element_integer_index_);
 
       if (cluster_id != -1) {
@@ -3302,7 +3304,6 @@ void LibMesh::build_eqn_sys()
 
 // intialize from mesh file
 void LibMesh::initialize()
-  void LibMesh::initialize()
 {
   if (!settings::libmesh_comm) {
     fatal_error("Attempting to use an unstructured mesh without a libMesh "
