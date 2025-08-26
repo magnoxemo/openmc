@@ -3340,7 +3340,7 @@ void LibMesh::initialize()
 
       if (amalgamation_) {
         auto cluster_elem = elem;
-        unsigned int cluster_id = elem->get_extra_integer(cluster_element_integer_index_);
+        unsigned int  p = elem->get_extra_integer(cluster_element_integer_index_);
         if (cluster_id != -1) {
           auto first_element_in_a_cluster = m_->elem_ptr(cluster_id);
           if (first_element_in_a_cluster and first_element_in_a_cluster->active())
