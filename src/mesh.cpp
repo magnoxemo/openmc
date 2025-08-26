@@ -3238,25 +3238,39 @@ LibMesh::LibMesh(libMesh::MeshBase& input_mesh, double length_multiplier)
   initialize();
 }
 
-LibMesh::LibMesh(libMesh::MeshBase& input_mesh,
-  const std::string& cluster_element_integer_name, double length_multiplier)
-  : adaptive_(input_mesh.n_active_elem() != input_mesh.n_elem())
-{
-  if (!dynamic_cast<libMesh::ReplicatedMesh*>(&input_mesh)) {
-    fatal_error("At present LibMesh tallies require a replicated mesh. Please "
-                "ensure 'input_mesh' is a libMesh::ReplicatedMesh.");
-  }
 
-  m_ = &input_mesh;
-  set_length_multiplier(length_multiplier);
+void LibMesh::set_mesh_tally_amalgamation(std::string cluster_element_integer_name){
 
-  cluster_element_integer_index_ =
-    input_mesh.has_elem_integer(cluster_element_integer_name)
+  cluster_element_integer_index_ = input_mesh.has_elem_integer(cluster_element_integer_name)
       ? input_mesh.get_elem_integer_index(cluster_element_integer_name)
       : -1;
   amalgamation_ = (cluster_element_integer_index_ != -1);
 
-  initialize();
+  //should we add a warning if amalgamation is false?
+
+  if (adaptive_ && amalgamation_) {
+
+    //reseve the hash map for cluster elements
+    clustering_element_mapping_.reserve(m_->n_active_elem());
+
+    //adding clustering map
+    for (auto it = m_->active_elements_begin(); it != m_->active_elements_end(); it++) {
+
+      auto cluster_elem = *it;
+      unsigned int  cluster_id = elem->get_extra_integer(cluster_element_integer_index_);
+
+      if (cluster_id != -1) {
+        auto first_element_in_a_cluster = m_->elem_ptr(cluster_id);
+
+        if (first_element_in_a_cluster and first_element_in_a_cluster->active())
+          cluster_elem = first_element_in_a_cluster;
+      }
+      clustering_element_mapping_.insert(std::make_pair(elem, cluster_elem));
+
+    }
+  }
+
+
 }
 
 // create the mesh from an input file
@@ -3288,6 +3302,7 @@ void LibMesh::build_eqn_sys()
 
 // intialize from mesh file
 void LibMesh::initialize()
+  void LibMesh::initialize()
 {
   if (!settings::libmesh_comm) {
     fatal_error("Attempting to use an unstructured mesh without a libMesh "
@@ -3329,25 +3344,9 @@ void LibMesh::initialize()
   if (adaptive_) {
     bin_to_elem_map_.reserve(m_->n_active_elem());
     elem_to_bin_map_.resize(m_->n_elem(), -1);
-
-    //reseve the hash map for cluster elements
-    clustering_element_mapping_.reserve(m_->n_active_elem());
-
-    //adding clustering map
     for (auto it = m_->active_elements_begin(); it != m_->active_elements_end();
       it++) {
       auto elem = *it;
-
-      if (amalgamation_) {
-        auto cluster_elem = elem;
-        unsigned int  cluster_id = elem->get_extra_integer(cluster_element_integer_index_);
-        if (cluster_id != -1) {
-          auto first_element_in_a_cluster = m_->elem_ptr(cluster_id);
-          if (first_element_in_a_cluster and first_element_in_a_cluster->active())
-            cluster_elem = first_element_in_a_cluster;
-        }
-        clustering_element_mapping_.insert(std::make_pair(elem, cluster_elem));
-      }
 
       bin_to_elem_map_.push_back(elem->id());
       elem_to_bin_map_[elem->id()] = bin_to_elem_map_.size() - 1;
@@ -3361,6 +3360,7 @@ void LibMesh::initialize()
   lower_left_ = {ll(0), ll(1), ll(2)};
   upper_right_ = {ur(0), ur(1), ur(2)};
 }
+
 
 // Sample position within a tet for LibMesh type tets
 Position LibMesh::sample_element(int32_t bin, uint64_t* seed) const
