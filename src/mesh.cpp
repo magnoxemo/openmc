@@ -3249,7 +3249,7 @@ LibMesh::set_mesh_tally_amalgamation(std::string cluster_element_integer_name){
 
   //should we add a warning if amalgamation is false?
 
-  if (adaptive_ && amalgamation_) {
+  if (amalgamation_) {
 
     //reseve the hash map for cluster elements
     clustering_element_mapping_.reserve(m_->n_active_elem());
