@@ -1,5 +1,6 @@
 #include "openmc/tallies/filter_sptl_legendre.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -12,265 +13,267 @@
 
 namespace openmc {
 
-namespace {
+//==============================================================================
+// File-local helpers
+//==============================================================================
 
-const char* axis_name(LegendreAxis a)
-{
-  switch (a) {
-  case LegendreAxis::x:
-    return "x";
-  case LegendreAxis::y:
-    return "y";
-  default:
-    return "z";
-  }
-}
+    namespace {
 
-double axis_coord(const Particle& p, LegendreAxis a)
-{
-  switch (a) {
-  case LegendreAxis::x:
-    return p.r().x;
-  case LegendreAxis::y:
-    return p.r().y;
-  default:
-    return p.r().z;
-  }
-}
+        const char* axis_name(LegendreAxis a)
+        {
+          switch (a) {
+            case LegendreAxis::x: return "x";
+            case LegendreAxis::y: return "y";
+            default:              return "z";
+          }
+        }
 
-} // anonymous namespace
+        double axis_coord(const Particle& p, LegendreAxis a)
+        {
+          switch (a) {
+            case LegendreAxis::x: return p.r().x;
+            case LegendreAxis::y: return p.r().y;
+            default:              return p.r().z;
+          }
+        }
 
-void SpatialLegendreFilter::from_xml(pugi::xml_node node)
-{
-  bool has_axis_children =
-    node.child("x") || node.child("y") || node.child("z");
+        LegendreAxis axis_from_char(char c)
+        {
+          switch (c) {
+            case 'x': return LegendreAxis::x;
+            case 'y': return LegendreAxis::y;
+            case 'z': return LegendreAxis::z;
+            default:
+              throw std::invalid_argument {
+                      fmt::format("Invalid FET axis '{}'; must be 'x', 'y', or 'z'.", c)};
+          }
+        }
 
-  if (has_axis_children) {
-    static constexpr LegendreAxis axis_vals[3] = {
-      LegendreAxis::x, LegendreAxis::y, LegendreAxis::z};
-    static constexpr const char* axis_tags[3] = {"x", "y", "z"};
-    for (int d = 0; d < 3; ++d) {
-      auto child = node.child(axis_tags[d]);
-      if (!child)
-        continue;
-      add_axis(axis_vals[d], std::stoi(get_node_value(child, "order")),
-        std::stod(get_node_value(child, "min")),
-        std::stod(get_node_value(child, "max")));
+    } // anonymous namespace
+
+//==============================================================================
+// SpatialLegendreFilter — configuration
+//==============================================================================
+
+    void SpatialLegendreFilter::add_axis(
+            LegendreAxis axis, int order, double min, double max)
+    {
+      if (order < 0)
+        throw std::invalid_argument {"Legendre order must be >= 0."};
+      if (max <= min)
+        throw std::invalid_argument {"FET axis max must be greater than min."};
+      for (const auto& ad : axes_)
+        if (ad.axis == axis)
+          throw std::invalid_argument {fmt::format(
+                  "Axis '{}' has already been added to this FET filter.",
+                  axis_name(axis))};
+
+      axes_.push_back({axis, order, min, max});
+
+      // Enforce x -> y -> z storage order so bin layout is always xyz-major.
+      std::sort(axes_.begin(), axes_.end(), [](const AxisDef& a, const AxisDef& b) {
+          return static_cast<int>(a.axis) < static_cast<int>(b.axis);
+      });
+
+      update_n_bins();
     }
-  } else {
-    this->set_order(std::stoi(get_node_value(node, "order")));
-    auto axis_str = get_node_value(node, "axis");
-    switch (axis_str[0]) {
-    case 'x':
-      this->set_axis(LegendreAxis::x);
-      break;
-    case 'y':
-      this->set_axis(LegendreAxis::y);
-      break;
-    case 'z':
-      this->set_axis(LegendreAxis::z);
-      break;
-    default:
-      throw std::runtime_error {
-        "Axis for SpatialLegendreFilter must be 'x', 'y', or 'z'"};
+
+//==============================================================================
+// SpatialLegendreFilter — XML I/O
+//==============================================================================
+
+    void SpatialLegendreFilter::from_xml(pugi::xml_node node)
+    {
+      // Axes are written as child elements <x>, <y>, <z> each containing
+      // <order>, <min>, <max>.  Read them in xyz order — add_axis will sort
+      // internally but iterating in order avoids any ambiguity.
+      static constexpr LegendreAxis axis_vals[3] = {
+              LegendreAxis::x, LegendreAxis::y, LegendreAxis::z};
+      static constexpr const char*  axis_tags[3] = {"x", "y", "z"};
+
+      bool found_any = false;
+      for (int d = 0; d < 3; ++d) {
+        auto child = node.child(axis_tags[d]);
+        if (!child)
+          continue;
+        found_any = true;
+        add_axis(axis_vals[d],
+                 std::stoi(get_node_value(child, "order")),
+                 std::stod(get_node_value(child, "min")),
+                 std::stod(get_node_value(child, "max")));
+      }
+
+      if (!found_any)
+        throw std::invalid_argument {
+                "SpatialLegendreFilter requires at least one axis child element "
+                "(<x>, <y>, or <z>) with <order>, <min>, and <max>."};
     }
-    this->set_minmax(std::stod(get_node_value(node, "min")),
-      std::stod(get_node_value(node, "max")));
-  }
-}
 
-void SpatialLegendreFilter::set_order(int order)
-{
-  if (order < 0)
-    throw std::invalid_argument {"Legendre order must be non-negative."};
-  if (axes_.empty())
-    axes_.push_back({LegendreAxis::x, order, -1.0, 1.0});
-  else
-    axes_[0].order = order;
-  update_n_bins();
-}
+//==============================================================================
+// SpatialLegendreFilter — bin scoring
+//==============================================================================
 
-void SpatialLegendreFilter::set_axis(LegendreAxis axis)
-{
-  if (axes_.empty())
-    axes_.push_back({axis, 0, -1.0, 1.0});
-  else
-    axes_[0].axis = axis;
-}
+    void SpatialLegendreFilter::get_all_bins(
+            const Particle& p, TallyEstimator /*estimator*/, FilterMatch& match) const
+    {
+      // Evaluate Legendre basis for each active axis.
+      // Return immediately if the particle is outside any axis domain.
+      vector<vector<double>> legendre_weights(axes_.size());
+      for (std::size_t d = 0; d < axes_.size(); ++d) {
+        const auto& ax    = axes_[d];
+        const double coord = axis_coord(p, ax.axis);
 
-void SpatialLegendreFilter::set_minmax(double min, double max)
-{
-  if (max <= min)
-    throw std::invalid_argument {
-      "Maximum value must be greater than minimum value"};
-  if (axes_.empty())
-    axes_.push_back({LegendreAxis::x, 0, min, max});
-  else {
-    axes_[0].min = min;
-    axes_[0].max = max;
-  }
-}
+        if (coord < ax.min || coord > ax.max)
+          return;
 
-void SpatialLegendreFilter::add_axis(
-  LegendreAxis axis, int order, double min, double max)
-{
-  if (order < 0)
-    throw std::invalid_argument {"Legendre order must be non-negative."};
-  if (max <= min)
-    throw std::invalid_argument {
-      "Maximum value must be greater than minimum value"};
-  for (const auto& ad : axes_)
-    if (ad.axis == axis)
-      throw std::invalid_argument {fmt::format(
-        "Axis '{}' has already been added to this filter.", axis_name(axis))};
-  axes_.push_back({axis, order, min, max});
-  update_n_bins();
-}
+        const double xi = 2.0 * (coord - ax.min) / (ax.max - ax.min) - 1.0;
+        legendre_weights[d].resize(ax.order + 1);
+        calc_pn_c(ax.order, xi, legendre_weights[d].data());
+      }
 
-void SpatialLegendreFilter::get_all_bins(
-  const Particle& p, TallyEstimator /*estimator*/, FilterMatch& match) const
-{
-  vector<vector<double>> wgts(axes_.size());
-  for (std::size_t d = 0; d < axes_.size(); ++d) {
-    const auto& ad = axes_[d];
-    double coord = axis_coord(p, ad.axis);
-    if (coord < ad.min || coord > ad.max)
-      return;
-    double xi = 2.0 * (coord - ad.min) / (ad.max - ad.min) - 1.0;
-    wgts[d].resize(ad.order + 1);
-    calc_pn_c(ad.order, xi, wgts[d].data());
-  }
-  for (int bin = 0; bin < n_bins_; ++bin) {
-    auto idx = decode_bin(bin);
-    double weight = 1.0;
-    for (std::size_t d = 0; d < axes_.size(); ++d)
-      weight *= wgts[d][idx[d]];
-    match.bins_.push_back(bin);
-    match.weights_.push_back(weight);
-  }
-}
-
-void SpatialLegendreFilter::to_statepoint(hid_t filter_group) const
-{
-  Filter::to_statepoint(filter_group);
-  if (axes_.size() == 1) {
-    write_dataset(filter_group, "order", axes_[0].order);
-    write_dataset(filter_group, "axis", axis_name(axes_[0].axis));
-    write_dataset(filter_group, "min", axes_[0].min);
-    write_dataset(filter_group, "max", axes_[0].max);
-  } else {
-    for (const auto& ad : axes_) {
-      hid_t g = create_group(filter_group, axis_name(ad.axis));
-      write_dataset(g, "order", ad.order);
-      write_dataset(g, "min", ad.min);
-      write_dataset(g, "max", ad.max);
-      close_group(g);
+      // Enumerate all tensor-product bins.
+      // Weight = product of per-axis Legendre values at the decoded polynomial
+      // indices.  The bin ordering is xyz-major because axes_ is xyz-sorted.
+      for (int bin = 0; bin < n_bins_; ++bin) {
+        const auto idx = decode_bin(bin);
+        double weight = 1.0;
+        for (std::size_t d = 0; d < axes_.size(); ++d)
+          weight *= legendre_weights[d][idx[d]];
+        match.bins_.push_back(bin);
+        match.weights_.push_back(weight);
+      }
     }
-  }
-}
 
-std::string SpatialLegendreFilter::text_label(int bin) const
-{
-  auto idx = decode_bin(bin);
-  std::string label = "Legendre expansion";
-  for (std::size_t d = 0; d < axes_.size(); ++d)
-    label += fmt::format(", {} axis, P{}", axis_name(axes_[d].axis), idx[d]);
-  return label;
-}
+//==============================================================================
+// SpatialLegendreFilter — statepoint I/O
+//==============================================================================
 
-void SpatialLegendreFilter::update_n_bins()
-{
-  int total = 1;
-  for (const auto& ad : axes_)
-    total *= ad.order + 1;
-  n_bins_ = total;
-}
+    void SpatialLegendreFilter::to_statepoint(hid_t filter_group) const
+    {
+      Filter::to_statepoint(filter_group);
 
-vector<int> SpatialLegendreFilter::decode_bin(int bin) const
-{
-  vector<int> idx(axes_.size());
-  int remainder = bin;
-  for (int d = static_cast<int>(axes_.size()) - 1; d >= 0; --d) {
-    idx[d] = remainder % (axes_[d].order + 1);
-    remainder /= axes_[d].order + 1;
-  }
-  return idx;
-}
+      // Write axis metadata as parallel arrays so postprocessors can read the
+      // tensor shape directly: co effs.reshape(tensor_shape) gives an xyz-indexed
+      // array with no further reordering needed.
+      const std::size_t n = axes_.size();
+      vector<std::string> labels(n);
+      vector<int>         orders(n);
+      vector<double>      mins(n), maxs(n), tensor_shape(n);
 
-// C-API — all original functions unchanged; add_axis variant added at end.
+      for (std::size_t d = 0; d < n; ++d)
+      {
+        labels[d]       = axis_name(axes_[d].axis);
+        orders[d]       = axes_[d].order;
+        mins[d]         = axes_[d].min;
+        maxs[d]         = axes_[d].max;
+        tensor_shape[d] = axes_[d].order + 1;
+      }
 
-std::pair<int, SpatialLegendreFilter*> check_sptl_legendre_filter(int32_t index)
-{
-  int err = verify_filter(index);
-  if (err)
-    return {err, nullptr};
-  auto* filt =
-    dynamic_cast<SpatialLegendreFilter*>(model::tally_filters[index].get());
-  if (!filt) {
-    set_errmsg("Not a spatial Legendre filter.");
-    err = OPENMC_E_INVALID_TYPE;
-  }
-  return {err, filt};
-}
+      write_dataset(filter_group, "axes",         labels);
+      write_dataset(filter_group, "orders",       orders);
+      write_dataset(filter_group, "mins",         mins);
+      write_dataset(filter_group, "maxs",         maxs);
+      write_dataset(filter_group, "tensor_shape", tensor_shape);
+    }
 
-extern "C" int openmc_spatial_legendre_filter_get_order(
-  int32_t index, int* order)
-{
-  auto [e, f] = check_sptl_legendre_filter(index);
-  if (e)
-    return e;
-  *order = f->order();
-  return 0;
-}
+    std::string SpatialLegendreFilter::text_label(int bin) const
+    {
+      const auto idx = decode_bin(bin);
+      std::string label = "FET";
+      for (std::size_t d = 0; d < axes_.size(); ++d)
+        label += fmt::format(" P{}({})", idx[d], axis_name(axes_[d].axis));
+      return label;
+    }
 
-extern "C" int openmc_spatial_legendre_filter_get_params(
-  int32_t index, int* axis, double* min, double* max)
-{
-  auto [e, f] = check_sptl_legendre_filter(index);
-  if (e)
-    return e;
-  *axis = static_cast<int>(f->axis());
-  *min = f->min();
-  *max = f->max();
-  return 0;
-}
+//==============================================================================
+// SpatialLegendreFilter — private helpers
+//==============================================================================
 
-extern "C" int openmc_spatial_legendre_filter_set_order(
-  int32_t index, int order)
-{
-  auto [e, f] = check_sptl_legendre_filter(index);
-  if (e)
-    return e;
-  f->set_order(order);
-  return 0;
-}
+    void SpatialLegendreFilter::update_n_bins()
+    {
+      int total = 1;
+      for (const auto& ad : axes_)
+        total *= ad.order + 1;
+      n_bins_ = total;
+    }
 
-extern "C" int openmc_spatial_legendre_filter_set_params(
-  int32_t index, const int* axis, const double* min, const double* max)
-{
-  auto [e, f] = check_sptl_legendre_filter(index);
-  if (e)
-    return e;
-  if (axis)
-    f->set_axis(static_cast<LegendreAxis>(*axis));
-  if (min && max)
-    f->set_minmax(*min, *max);
-  return 0;
-}
+    vector<int> SpatialLegendreFilter::decode_bin(int bin) const
+    {
+      // Row-major (xyz-major) decode: peel off the fastest-varying axis last.
+      vector<int> idx(axes_.size());
+      int remainder = bin;
+      for (int d = static_cast<int>(axes_.size()) - 1; d >= 0; --d) {
+        idx[d]    = remainder % (axes_[d].order + 1);
+        remainder /= axes_[d].order + 1;
+      }
+      return idx;
+    }
 
-extern "C" int openmc_spatial_legendre_filter_add_axis(
-  int32_t index, int axis, int order, double min, double max)
-{
-  auto [err, filt] = check_sptl_legendre_filter(index);
-  if (err)
-    return err;
-  try {
-    filt->add_axis(static_cast<LegendreAxis>(axis), order, min, max);
-  } catch (const std::exception& e) {
-    set_errmsg(e.what());
-    return OPENMC_E_INVALID_ARGUMENT;
-  }
-  return 0;
-}
+//==============================================================================
+// C-API
+//==============================================================================
+
+    namespace {
+
+        std::pair<int, SpatialLegendreFilter*> check_sptl_legendre_filter(
+                int32_t index)
+        {
+          int err = verify_filter(index);
+          if (err)
+            return {err, nullptr};
+          auto* filt =
+                  dynamic_cast<SpatialLegendreFilter*>(model::tally_filters[index].get());
+          if (!filt) {
+            set_errmsg("Filter is not a SpatialLegendreFilter.");
+            return {OPENMC_E_INVALID_TYPE, nullptr};
+          }
+          return {0, filt};
+        }
+
+    } // anonymous namespace
+
+    extern "C" int openmc_spatial_legendre_filter_add_axis(
+            int32_t index, int axis, int order, double min, double max)
+    {
+      auto [err, filt] = check_sptl_legendre_filter(index);
+      if (err)
+        return err;
+      try {
+        filt->add_axis(static_cast<LegendreAxis>(axis), order, min, max);
+      } catch (const std::exception& e) {
+        set_errmsg(e.what());
+        return OPENMC_E_INVALID_ARGUMENT;
+      }
+      return 0;
+    }
+
+    extern "C" int openmc_spatial_legendre_filter_get_n_axes(
+            int32_t index, int* n)
+    {
+      auto [err, filt] = check_sptl_legendre_filter(index);
+      if (err)
+        return err;
+      *n = filt->n_axes();
+      return 0;
+    }
+
+    extern "C" int openmc_spatial_legendre_filter_get_axis(
+            int32_t index, int d, int* axis, int* order, double* min, double* max)
+    {
+      auto [err, filt] = check_sptl_legendre_filter(index);
+      if (err)
+        return err;
+      if (d < 0 || d >= filt->n_axes()) {
+        set_errmsg(fmt::format("Axis index {} out of range [0, {}).",
+                               d, filt->n_axes()));
+        return OPENMC_E_OUT_OF_BOUNDS;
+      }
+      const auto& ad = filt->axis(d);
+      *axis  = static_cast<int>(ad.axis);
+      *order = ad.order;
+      *min   = ad.min;
+      *max   = ad.max;
+      return 0;
+    }
 
 } // namespace openmc

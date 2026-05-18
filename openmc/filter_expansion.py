@@ -137,91 +137,61 @@ class LegendreFilter(ExpansionFilter):
         return out
 
 
-class SpatialLegendreFilter(ExpansionFilter):
-    r"""Score Legendre expansion moments in space up to specified order.
+class SpatialLegendreFilter(Filter):
+    r"""Multidimensional Functional Expansion Tally (FET) filter using
+    Legendre polynomials in up to three spatial dimensions.
 
-    Single-axis mode (original): supply ``order``, ``axis``, ``minimum``, and
-    ``maximum`` to the constructor.
+    Each axis maps the particle coordinate to [-1, 1] and evaluates
+    Legendre polynomials P_0 … P_n.  Bins are the tensor product of the
+    active axes in x → y → z order; weights are the products of the
+    per-axis Legendre values.  Works with both collision and tracklength
+    estimators.
 
-    Multi-dimensional FET mode: use the no-argument constructor (or supply
-    only ``filter_id``) and then call :meth:`add_axis` once per dimension.
-    Bins are the tensor product of per-axis polynomials; weights are the
-    corresponding products of Legendre values.  Both the ``collision`` and
-    ``tracklength`` estimators are supported.
+    Use :meth:`add_axis` to configure each dimension.  Axes are always
+    stored in x → y → z order regardless of the order they are added.
 
     Parameters
     ----------
-    order : int, optional
-        Maximum Legendre polynomial order (single-axis mode)
-    axis : {'x', 'y', 'z'}, optional
-        Axis for the expansion (single-axis mode)
-    minimum : float, optional
-        Minimum value along selected axis (single-axis mode)
-    maximum : float, optional
-        Maximum value along selected axis (single-axis mode)
     filter_id : int or None
-        Unique identifier for the filter
+        Unique identifier for the filter.
 
-    Attributes
-    ----------
-    order : int
-        Maximum Legendre polynomial order of the first (or only) axis
-    axis : {'x', 'y', 'z'}
-        Axis of the first (or only) dimension
-    minimum : float
-        Domain minimum of the first (or only) axis
-    maximum : float
-        Domain maximum of the first (or only) axis
-    axes : list of dict
-        Full list of active axes, each a dict with keys
-        ``'axis'``, ``'order'``, ``'minimum'``, ``'maximum'``
-    id : int
-        Unique identifier for the filter
-    num_bins : int
-        Total number of filter bins
+    Examples
+    --------
+    1-D FET along x:
 
+    >>> f = openmc.SpatialLegendreFilter()
+    >>> f.add_axis('x', order=4, minimum=0.0, maximum=15.0)
+
+    3-D FET:
+
+    >>> f = openmc.SpatialLegendreFilter()
+    >>> f.add_axis('x', order=10, minimum=0.0,  maximum=15.0)
+    >>> f.add_axis('y', order=2,  minimum=-1.0, maximum=1.0)
+    >>> f.add_axis('z', order=2,  minimum=-1.0, maximum=1.0)
     """
 
     _AXES = ('x', 'y', 'z')
 
-    def __init__(self, order=None, axis=None, minimum=None, maximum=None,
-                 filter_id=None):
-        # _axes stores the ordered list of active axis definitions.
-        # Do NOT call super().__init__: ExpansionFilter.__init__ unconditionally
-        # calls self.order = order which rejects None.  Filter.__init__ requires
-        # a bins argument.  We only need self.id from the base classes.
-        self._axes = []
+    def __init__(self, filter_id=None):
+        self._axes = []   # list of dicts, always sorted x -> y -> z
         self.id = filter_id
 
-        # Single-axis convenience constructor — all four args provided.
-        if order is not None:
-            cv.check_type('order', order, Integral)
-            cv.check_greater_than('order', order, 0, equality=True)
-            cv.check_value('axis', axis, self._AXES)
-            cv.check_type('minimum', minimum, Real)
-            cv.check_type('maximum', maximum, Real)
-            self._axes.append({
-                'axis': axis, 'order': order,
-                'minimum': minimum, 'maximum': maximum,
-            })
-            self._update_bins()
-
     # ------------------------------------------------------------------
-    # Multi-dimensional FET axis management
+    # Public API
+    # ------------------------------------------------------------------
 
     def add_axis(self, axis, order, minimum, maximum):
-        """Add a spatial dimension to the FET expansion.
+        """Add a spatial axis to the FET expansion.
 
         Parameters
         ----------
         axis : {'x', 'y', 'z'}
-            Cartesian axis for this dimension
         order : int
-            Maximum Legendre polynomial order along this axis
+            Maximum Legendre polynomial order (>= 0).
         minimum : float
-            Minimum coordinate value for domain normalisation
+            Lower bound of the physical domain on this axis.
         maximum : float
-            Maximum coordinate value for domain normalisation
+            Upper bound of the physical domain on this axis.
         """
         cv.check_value('axis', axis, self._AXES)
         cv.check_type('order', order, Integral)
@@ -230,173 +200,97 @@ class SpatialLegendreFilter(ExpansionFilter):
         cv.check_type('maximum', maximum, Real)
         if maximum <= minimum:
             raise ValueError(
-                f"maximum must be greater than minimum for axis '{axis}'")
+                f"FET axis '{axis}': maximum must be greater than minimum.")
         if any(d['axis'] == axis for d in self._axes):
             raise ValueError(
                 f"Axis '{axis}' has already been added to this filter.")
-        self._axes.append({
-            'axis': axis, 'order': order,
-            'minimum': minimum, 'maximum': maximum,
-        })
+
+        self._axes.append(
+            {'axis': axis, 'order': order, 'minimum': minimum, 'maximum': maximum})
+        # Enforce x -> y -> z storage order.
+        self._axes.sort(key=lambda d: self._AXES.index(d['axis']))
         self._update_bins()
-
-    def _update_bins(self):
-        """Recompute flat bin labels from active axes."""
-        from itertools import product as iproduct
-        ranges = [range(d['order'] + 1) for d in self._axes]
-        self.bins = [
-            ','.join(f'P{i}({d["axis"]})' for d, i in zip(self._axes, combo))
-            for combo in iproduct(*ranges)
-        ]
-
-    # ------------------------------------------------------------------
-    # Single-axis backward-compatible accessors
 
     @property
     def axes(self):
-        """List of active axis definitions."""
+        """List of active axis dicts in x -> y -> z order (read-only copy)."""
         return list(self._axes)
 
     @property
-    def order(self):
-        return self._axes[0]['order']
-
-    @ExpansionFilter.order.setter
-    def order(self, order):
-        ExpansionFilter.order.__set__(self, order)
-        if self._axes:
-            self._axes[0]['order'] = order
-        self._update_bins()
-
-    @property
-    def axis(self):
-        return self._axes[0]['axis']
-
-    @axis.setter
-    def axis(self, axis):
-        cv.check_value('axis', axis, self._AXES)
-        if self._axes:
-            self._axes[0]['axis'] = axis
-        self._update_bins()
-
-    @property
-    def minimum(self):
-        return self._axes[0]['minimum']
-
-    @minimum.setter
-    def minimum(self, minimum):
-        cv.check_type('minimum', minimum, Real)
-        if self._axes:
-            self._axes[0]['minimum'] = minimum
-
-    @property
-    def maximum(self):
-        return self._axes[0]['maximum']
-
-    @maximum.setter
-    def maximum(self, maximum):
-        cv.check_type('maximum', maximum, Real)
-        if self._axes:
-            self._axes[0]['maximum'] = maximum
+    def num_bins(self):
+        total = 1
+        for d in self._axes:
+            total *= d['order'] + 1
+        return total
 
     # ------------------------------------------------------------------
     # Dunder methods
-
-    def __hash__(self):
-        string = type(self).__name__ + '\n'
-        for d in self._axes:
-            string += (f'\tAxis={d["axis"]} Order={d["order"]} '
-                       f'Min={d["minimum"]} Max={d["maximum"]}\n')
-        return hash(string)
-
-    def __eq__(self, other):
-        if type(self) is not type(other):
-            return False
-        return hash(self) == hash(other)
+    # ------------------------------------------------------------------
 
     def __repr__(self):
-        string = type(self).__name__ + '\n'
+        lines = [type(self).__name__]
         for d in self._axes:
-            string += (f'  axis={d["axis"]}  order={d["order"]}  '
-                       f'min={d["minimum"]}  max={d["maximum"]}\n')
-        string += '{: <16}=\t{}\n'.format('\tID', self.id)
-        return string
+            lines.append(f"  {d['axis']}: order={d['order']}  "
+                         f"[{d['minimum']}, {d['maximum']}]")
+        lines.append(f'  id={self.id}  bins={self.num_bins}')
+        return '\n'.join(lines)
+
+    def __hash__(self):
+        return hash(repr(self))
+
+    def __eq__(self, other):
+        return type(self) is type(other) and hash(self) == hash(other)
 
     # ------------------------------------------------------------------
     # Serialisation
+    # ------------------------------------------------------------------
+
+    def _update_bins(self):
+        from itertools import product as iproduct
+        ranges = [range(d['order'] + 1) for d in self._axes]
+        self.bins = [
+            ' '.join(f'P{i}({d["axis"]})' for d, i in zip(self._axes, combo))
+            for combo in iproduct(*ranges)
+        ]
 
     def to_xml_element(self):
-        """Return XML Element representing the filter."""
         element = ET.Element('filter')
         element.set('id', str(self.id))
         element.set('type', self.short_name.lower())
-
-        if len(self._axes) == 1:
-            # Original single-axis layout for backward compatibility.
-            d = self._axes[0]
-            ET.SubElement(element, 'order').text = str(d['order'])
-            ET.SubElement(element, 'axis').text  = d['axis']
-            ET.SubElement(element, 'min').text   = str(d['minimum'])
-            ET.SubElement(element, 'max').text   = str(d['maximum'])
-        else:
-            # Multi-dimensional FET: one child element per axis.
-            for d in self._axes:
-                dim_elem = ET.SubElement(element, d['axis'])
-                ET.SubElement(dim_elem, 'order').text = str(d['order'])
-                ET.SubElement(dim_elem, 'min').text   = str(d['minimum'])
-                ET.SubElement(dim_elem, 'max').text   = str(d['maximum'])
-
+        for d in self._axes:
+            dim = ET.SubElement(element, d['axis'])
+            ET.SubElement(dim, 'order').text = str(d['order'])
+            ET.SubElement(dim, 'min').text   = str(d['minimum'])
+            ET.SubElement(dim, 'max').text   = str(d['maximum'])
         return element
 
     @classmethod
     def from_xml_element(cls, elem, **kwargs):
-        filter_id = int(get_text(elem, 'id'))
-        # Detect multi-dimensional FET by presence of axis child elements.
-        axis_elems = {ax: elem.find(ax) for ax in ('x', 'y', 'z')}
-        if any(v is not None for v in axis_elems.values()):
-            filt = cls(filter_id=filter_id)
-            for ax in ('x', 'y', 'z'):
-                dim_elem = axis_elems[ax]
-                if dim_elem is not None:
-                    filt.add_axis(
-                        ax,
-                        int(get_text(dim_elem, 'order')),
-                        float(get_text(dim_elem, 'min')),
-                        float(get_text(dim_elem, 'max')),
-                    )
-            return filt
-        # Original single-axis layout.
-        order   = int(get_text(elem, 'order'))
-        axis    = get_text(elem, 'axis')
-        minimum = float(get_text(elem, 'min'))
-        maximum = float(get_text(elem, 'max'))
-        return cls(order, axis, minimum, maximum, filter_id=filter_id)
+        filt = cls(filter_id=int(get_text(elem, 'id')))
+        for ax in ('x', 'y', 'z'):
+            dim = elem.find(ax)
+            if dim is not None:
+                filt.add_axis(ax,
+                              int(get_text(dim, 'order')),
+                              float(get_text(dim, 'min')),
+                              float(get_text(dim, 'max')))
+        return filt
 
     @classmethod
     def from_hdf5(cls, group, **kwargs):
         if group['type'][()].decode() != cls.short_name.lower():
-            raise ValueError("Expected HDF5 data for filter type '"
-                             + cls.short_name.lower() + "' but got '"
-                             + group['type'][()].decode() + "' instead")
+            raise ValueError(
+                f"Expected filter type '{cls.short_name.lower()}' "
+                f"but got '{group['type'][()].decode()}'")
         filter_id = int(group.name.split('/')[-1].lstrip('filter '))
-        # Detect multidimensional FET by presence of axis sub-groups.
-        if any(ax in group for ax in ('x', 'y', 'z')):
-            filt = cls(filter_id=filter_id)
-            for ax in ('x', 'y', 'z'):
-                if ax in group:
-                    filt.add_axis(
-                        ax,
-                        int(group[ax]['order'][()]),
-                        float(group[ax]['min'][()]),
-                        float(group[ax]['max'][()]),
-                    )
-            return filt
-        # Original single-axis layout.
-        order = group['order'][()]
-        axis  = group['axis'][()].decode()
-        min_  = group['min'][()]
-        max_  = group['max'][()]
-        return cls(order, axis, min_, max_, filter_id)
+        filt = cls(filter_id=filter_id)
+        axes   = [a.decode() for a in group['axes'][()]]
+        orders = group['orders'][()]
+        mins   = group['mins'][()]
+        maxs   = group['maxs'][()]
+        for ax, order, mn, mx in zip(axes, orders, mins, maxs):
+            filt.add_axis(ax, int(order), float(mn), float(mx))
+        return filt
 
 
 class SphericalHarmonicsFilter(ExpansionFilter):
