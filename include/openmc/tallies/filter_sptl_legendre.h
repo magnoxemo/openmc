@@ -8,7 +8,7 @@
 
 namespace openmc {
 
-    enum class LegendreAxis { x = 0, y = 1, z = 2 };
+enum class LegendreAxis { x = 0, y = 1, z = 2 };
 
 //==============================================================================
 //! Multi-dimensional Functional Expansion Tally (FET) filter using Legendre
@@ -25,66 +25,67 @@ namespace openmc {
 //! sorted into x → y → z order internally.
 //==============================================================================
 
-    class SpatialLegendreFilter : public Filter {
-    public:
-        //! Per-axis configuration.
-        struct AxisDef {
-            LegendreAxis axis;
-            int          order; //!< Maximum Legendre polynomial order (>= 0).
-            double       min;   //!< Physical coordinate lower bound.
-            double       max;   //!< Physical coordinate upper bound.
-        };
+class SpatialLegendreFilter : public Filter {
+public:
+  //! Per-axis configuration.
+  struct AxisDef {
+    LegendreAxis axis;
+    int order;  //!< Maximum Legendre polynomial order (>= 0).
+    double min; //!< Physical coordinate lower bound.
+    double max; //!< Physical coordinate upper bound.
+  };
 
-        ~SpatialLegendreFilter() = default;
+  ~SpatialLegendreFilter() = default;
 
-        //----------------------------------------------------------------------------
-        // Virtual interface
-        //----------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
+  // Virtual interface
+  //----------------------------------------------------------------------------
 
-        std::string type_str() const override { return "spatiallegendre"; }
-        FilterType  type()     const override { return FilterType::SPATIAL_LEGENDRE; }
+  std::string type_str() const override { return "spatiallegendre"; }
+  FilterType type() const override { return FilterType::SPATIAL_LEGENDRE; }
 
-        void from_xml(pugi::xml_node node) override;
+  void from_xml(pugi::xml_node node) override;
 
-        void get_all_bins(const Particle& p, TallyEstimator estimator, FilterMatch& match) const override;
+  void get_all_bins(const Particle& p, TallyEstimator estimator,
+    FilterMatch& match) const override;
 
-        void to_statepoint(hid_t filter_group) const override;
+  void to_statepoint(hid_t filter_group) const override;
 
-        std::string text_label(int bin) const override;
+  std::string text_label(int bin) const override;
 
-        //----------------------------------------------------------------------------
-        // Configuration
-        //----------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
+  // Configuration
+  //----------------------------------------------------------------------------
 
-        //! Register an axis.  Axes are stored in x -> y -> z order regardless of
-        //! call order.  Each axis may be added at most once.
-        void add_axis(LegendreAxis axis, int order, double min, double max);
+  //! Register an axis.  Axes are stored in x -> y -> z order regardless of
+  //! call order.  Each axis may be added at most once.
+  void add_axis(LegendreAxis axis, int order, double min, double max);
 
-        //----------------------------------------------------------------------------
-        // Accessors
-        //----------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
+  // Accessors
+  //----------------------------------------------------------------------------
 
-        int                    n_axes() const { return static_cast<int>(axes_.size()); }
-        const vector<AxisDef>& axes()   const { return axes_; }
-        const AxisDef&         axis(int d) const { return axes_[d]; }
+  int n_axes() const { return static_cast<int>(axes_.size()); }
+  const vector<AxisDef>& axes() const { return axes_; }
+  const AxisDef& axis(int d) const { return axes_[d]; }
 
-    private:
-        //----------------------------------------------------------------------------
-        // Helpers
-        //----------------------------------------------------------------------------
+private:
+  //----------------------------------------------------------------------------
+  // Helpers
+  //----------------------------------------------------------------------------
 
-        //! Recompute n_bins_ as prod(order_d + 1) over active axes.
-        void update_n_bins();
+  //! Recompute n_bins_ as prod(order_d + 1) over active axes.
+  void update_n_bins();
 
-        //! Convert a flat bin index to per-axis polynomial indices (xyz-major).
-        vector<int> decode_bin(int bin) const;
+  //! Convert a flat bin index to per-axis polynomial indices (xyz-major).
+  vector<int> decode_bin(int bin) const;
 
-        //----------------------------------------------------------------------------
-        // Data
-        //----------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
+  // Data
+  //----------------------------------------------------------------------------
 
-        vector<AxisDef> axes_; //!< Active axes, always in x -> y -> z order.
-    };
+  vector<AxisDef> axes_; //!< Active axes, always in x -> y -> z order.
+};
 
 } // namespace openmc
 #endif // OPENMC_TALLIES_FILTER_SPTL_LEGENDRE_H
