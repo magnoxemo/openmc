@@ -16,13 +16,13 @@ enum class LegendreAxis { x = 0, y = 1, z = 2 };
 //!
 //! Each active axis maps the particle's spatial coordinate to [-1, 1] and
 //! evaluates Legendre polynomials P_0 … P_n.  Bins are the tensor product
-//! of the active axes in x → y → z order; weights are the corresponding
-//! products of Legendre values, enabling the collision estimator to directly
-//! tally the expansion moments.
+//! of the active axes in xyz order; weights are the corresponding
+//! products of Legendre values, enabling the collision estimator
+//! TODO: ( implement track length estimator as well )
+//! to directly tally the functional expansion moments.
 //!
 //! 1-D usage: add a single axis.
 //! 2-D / 3-D usage: add two or three axes in any order — they are always
-//! sorted into x → y → z order internally.
 //==============================================================================
 
 class SpatialLegendreFilter : public Filter {
@@ -35,11 +35,16 @@ public:
     double max; //!< Physical coordinate upper bound.
   };
 
+  //----------------------------------------------------------------------------
+  // Constructors, destructors
+  //----------------------------------------------------------------------------
+
   ~SpatialLegendreFilter() = default;
 
   //----------------------------------------------------------------------------
-  // Virtual interface
+  // Methods
   //----------------------------------------------------------------------------
+
 
   std::string type_str() const override { return "spatiallegendre"; }
   FilterType type() const override { return FilterType::SPATIAL_LEGENDRE; }
@@ -57,7 +62,7 @@ public:
   // Configuration
   //----------------------------------------------------------------------------
 
-  //! Register an axis.  Axes are stored in x -> y -> z order regardless of
+  //! Register an axis.  Axes are stored in xyz order regardless of
   //! call order.  Each axis may be added at most once.
   void add_axis(LegendreAxis axis, int order, double min, double max);
 
@@ -74,7 +79,7 @@ private:
   // Helpers
   //----------------------------------------------------------------------------
 
-  //! Recompute n_bins_ as prod(order_d + 1) over active axes.
+  //! Recompute n_bins_ as product (order_d + 1) over active axes.
   void update_n_bins();
 
   //! Convert a flat bin index to per-axis polynomial indices (xyz-major).
