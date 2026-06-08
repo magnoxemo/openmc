@@ -73,6 +73,10 @@ public:
   int n_axes() const { return static_cast<int>(axes_.size()); }
   const vector<AxisDef>& axes() const { return axes_; }
   const AxisDef& axis(int d) const { return axes_[d]; }
+    //! Convert a flat bin index to per-axis polynomial indices (xyz-major).
+
+
+  std::vector<int> decode_bin(int bin) const;
 
 private:
   //----------------------------------------------------------------------------
@@ -82,8 +86,6 @@ private:
   //! Recompute n_bins_ as product (order_d + 1) over active axes.
   void update_n_bins();
 
-  //! Convert a flat bin index to per-axis polynomial indices (xyz-major).
-  vector<int> decode_bin(int bin) const;
 
   //----------------------------------------------------------------------------
   // Data

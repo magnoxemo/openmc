@@ -111,7 +111,7 @@ void SpatialLegendreFilter::from_xml(pugi::xml_node node)
 }
 
 void SpatialLegendreFilter::get_all_bins(
-  const Particle& p, TallyEstimator /*estimator*/, FilterMatch& match) const
+  const Particle& p, TallyEstimator estimator, FilterMatch& match) const
 {
   // Evaluate Legendre basis for each active axis.
   // Return immediately if the particle is outside any axis domain.
@@ -185,7 +185,7 @@ void SpatialLegendreFilter::update_n_bins()
   n_bins_ = total;
 }
 
-vector<int> SpatialLegendreFilter::decode_bin(int bin) const
+std::vector<int> SpatialLegendreFilter::decode_bin(int bin) const
 {
   // Row-major (xyz-major) decode: peel off the fastest-varying axis last.
   vector<int> idx(axes_.size());
