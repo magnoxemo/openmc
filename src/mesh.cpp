@@ -61,12 +61,6 @@ namespace openmc {
 // Global variables
 //==============================================================================
 
-#ifdef OPENMC_LIBMESH_ENABLED
-const bool LIBMESH_ENABLED = true;
-#else
-const bool LIBMESH_ENABLED = false;
-#endif
-
 // Value used to indicate an empty slot in the hash table. We use -2 because
 // the value -1 is used to indicate a void material.
 constexpr int32_t EMPTY = -2;
@@ -1154,8 +1148,7 @@ tensor::Tensor<double> StructuredMesh::count_sites(
 
 #ifdef OPENMC_MPI
   // collect values from all processors
-  MPI_Reduce(
-    cnt.data(), counts.data(), total, MPI_DOUBLE, MPI_SUM, 0, mpi::intracomm);
+  mpi::reduce(cnt.data(), counts.data(), total, MPI_SUM, 0, mpi::intracomm);
 
   // Check if there were sites outside the mesh for any processor
   if (outside) {
@@ -1462,7 +1455,7 @@ RegularMesh::RegularMesh(pugi::xml_node node) : StructuredMesh {node}
   }
 
   if (int err = set_grid()) {
-    fatal_error(openmc_err_msg);
+    fatal_error(get_errmsg());
   }
 }
 
@@ -1498,12 +1491,17 @@ RegularMesh::RegularMesh(hid_t group) : StructuredMesh {group}
   }
 
   if (int err = set_grid()) {
-    fatal_error(openmc_err_msg);
+    fatal_error(get_errmsg());
   }
 }
 
 int RegularMesh::get_index_in_direction(double r, int i) const
 {
+  if (r <= lower_left_[i])
+    return r == lower_left_[i] ? 1 : 0;
+  if (r >= upper_right_[i])
+    return r == upper_right_[i] ? shape_[i] : shape_[i] + 1;
+
   return std::ceil((r - lower_left_[i]) / width_[i]);
 }
 
@@ -1627,8 +1625,7 @@ tensor::Tensor<double> RegularMesh::count_sites(
 
 #ifdef OPENMC_MPI
   // collect values from all processors
-  MPI_Reduce(
-    cnt.data(), counts.data(), total, MPI_DOUBLE, MPI_SUM, 0, mpi::intracomm);
+  mpi::reduce(cnt.data(), counts.data(), total, MPI_SUM, 0, mpi::intracomm);
 
   // Check if there were sites outside the mesh for any processor
   if (outside) {
@@ -1661,7 +1658,7 @@ RectilinearMesh::RectilinearMesh(pugi::xml_node node) : StructuredMesh {node}
   grid_[2] = get_node_array<double>(node, "z_grid");
 
   if (int err = set_grid()) {
-    fatal_error(openmc_err_msg);
+    fatal_error(get_errmsg());
   }
 }
 
@@ -1674,7 +1671,7 @@ RectilinearMesh::RectilinearMesh(hid_t group) : StructuredMesh {group}
   read_dataset(group, "z_grid", grid_[2]);
 
   if (int err = set_grid()) {
-    fatal_error(openmc_err_msg);
+    fatal_error(get_errmsg());
   }
 }
 
@@ -1809,7 +1806,7 @@ CylindricalMesh::CylindricalMesh(pugi::xml_node node)
   origin_ = get_node_position(node, "origin");
 
   if (int err = set_grid()) {
-    fatal_error(openmc_err_msg);
+    fatal_error(get_errmsg());
   }
 }
 
@@ -1822,7 +1819,7 @@ CylindricalMesh::CylindricalMesh(hid_t group) : PeriodicStructuredMesh {group}
   read_dataset(group, "origin", origin_);
 
   if (int err = set_grid()) {
-    fatal_error(openmc_err_msg);
+    fatal_error(get_errmsg());
   }
 }
 
@@ -2106,7 +2103,7 @@ SphericalMesh::SphericalMesh(pugi::xml_node node)
   origin_ = get_node_position(node, "origin");
 
   if (int err = set_grid()) {
-    fatal_error(openmc_err_msg);
+    fatal_error(get_errmsg());
   }
 }
 
@@ -2120,7 +2117,7 @@ SphericalMesh::SphericalMesh(hid_t group) : PeriodicStructuredMesh {group}
   read_dataset(group, "origin", origin_);
 
   if (int err = set_grid()) {
-    fatal_error(openmc_err_msg);
+    fatal_error(get_errmsg());
   }
 }
 
@@ -3868,6 +3865,14 @@ void LibMesh::set_score_data(const std::string& var_name,
 
 void LibMesh::write(const std::string& filename) const
 {
+  // A serial libMesh communicator considers every OpenMC rank to be its
+  // processor 0. Restrict the non-collective write to the OpenMC master in
+  // that case. With a parallel communicator, all ranks must participate in
+  // libMesh's solution assembly.
+  if (settings::libmesh_comm->size() == 1 && !mpi::master) {
+    return;
+  }
+
   write_message(fmt::format(
     "Writing file: {}.e for unstructured mesh {}", filename, this->id_));
   libMesh::ExodusII_IO exo(*m_);
