@@ -35,6 +35,7 @@ enum class FilterType {
   MESHBORN,
   MESH_MATERIAL,
   MESH_SURFACE,
+  MESH_FET,
   MU,
   MUSURFACE,
   PARENT_NUCLIDE,

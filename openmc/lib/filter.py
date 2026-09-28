@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from numbers import Integral
 from ctypes import c_int, c_int32, c_double, c_char_p, POINTER, \
     create_string_buffer, c_size_t
 from weakref import WeakValueDictionary
@@ -20,7 +21,7 @@ __all__ = [
     'Filter', 'AzimuthalFilter', 'CellFilter', 'CellbornFilter', 'CellfromFilter',
     'CellInstanceFilter', 'CollisionFilter', 'DistribcellFilter', 'DelayedGroupFilter',
     'EnergyFilter', 'EnergyoutFilter', 'EnergyFunctionFilter', 'LegendreFilter',
-    'MaterialFilter', 'MaterialFromFilter', 'MeshFilter', 'MeshBornFilter',
+    'MaterialFilter', 'MaterialFromFilter', 'MeshFilter', 'MeshBornFilter', 'MeshFETFilter',
     'MeshMaterialFilter', 'MeshSurfaceFilter', 'MuFilter', 'MuSurfaceFilter',
     'ParentNuclideFilter', 'ParticleFilter', 'ParticleProductionFilter', 'PolarFilter',
     'ReactionFilter', 'SphericalHarmonicsFilter', 'SpatialLegendreFilter',
@@ -89,6 +90,18 @@ _dll.openmc_material_filter_set_bins.errcheck = _error_handler
 _dll.openmc_mesh_filter_get_mesh.argtypes = [c_int32, POINTER(c_int32)]
 _dll.openmc_mesh_filter_get_mesh.restype = c_int
 _dll.openmc_mesh_filter_get_mesh.errcheck = _error_handler
+_dll.openmc_meshfet_filter_get_orders.argtypes = [
+    c_int32, POINTER(POINTER(c_int)), POINTER(c_size_t)]
+_dll.openmc_meshfet_filter_get_orders.restype = c_int
+_dll.openmc_meshfet_filter_get_orders.errcheck = _error_handler
+_dll.openmc_meshfet_filter_evaluate.argtypes = [
+    c_int32, c_int32, POINTER(c_double), POINTER(c_double), POINTER(c_int)]
+_dll.openmc_meshfet_filter_evaluate.restype = c_int
+_dll.openmc_meshfet_filter_evaluate.errcheck = _error_handler
+_dll.openmc_meshfet_filter_set_orders.argtypes = [
+    c_int32, POINTER(c_int), c_size_t]
+_dll.openmc_meshfet_filter_set_orders.restype = c_int
+_dll.openmc_meshfet_filter_set_orders.errcheck = _error_handler
 _dll.openmc_mesh_filter_set_mesh.argtypes = [c_int32, c_int32]
 _dll.openmc_mesh_filter_set_mesh.restype = c_int
 _dll.openmc_mesh_filter_set_mesh.errcheck = _error_handler
@@ -528,6 +541,86 @@ class MeshMaterialFilter(Filter):
     filter_type = 'meshmaterial'
 
 
+class MeshFETFilter(MeshFilter):
+    """MeshFET filter stored internally.
+
+    This class exposes a mesh functional expansion filter that is stored
+    internally in the OpenMC library. To obtain a view of a MeshFET filter with
+    a given ID, use the :data:`openmc.lib.filters` mapping.
+
+    Parameters
+    ----------
+    mesh : openmc.lib.UnstructuredMesh
+        Mesh to use for the filter
+    orders : int or Iterable of int
+        Expansion order on every element, or one order per element
+    uid : int or None
+        Unique ID of the MeshFET filter
+    new : bool
+        When `index` is None, this argument controls whether a new object is
+        created or a view of an existing object is returned.
+    index : int
+        Index in the `filters` array.
+
+    Attributes
+    ----------
+    filter_type : str
+        Type of filter
+    mesh : openmc.lib.UnstructuredMesh
+        Mesh used for the filter
+    orders : numpy.ndarray
+        Expansion order of each element; a negative order excludes an element.
+        Setting an integer applies it to every element.
+
+    """
+    filter_type = 'meshfet'
+
+    def __init__(self, mesh=None, orders=None, uid=None, new=True, index=None):
+        super().__init__(mesh, uid, new, index)
+        if orders is not None:
+            self.orders = orders
+
+    @property
+    def orders(self):
+        orders = POINTER(c_int)()
+        n = c_size_t()
+        _dll.openmc_meshfet_filter_get_orders(self._index, orders, n)
+        return as_array(orders, (n.value,)).copy()
+
+    @orders.setter
+    def orders(self, orders):
+        if isinstance(orders, Integral):
+            orders = np.full(len(self.orders), orders)
+        orders = np.ascontiguousarray(orders, dtype=c_int)
+        _dll.openmc_meshfet_filter_set_orders(
+            self._index, orders.ctypes.data_as(POINTER(c_int)), orders.size)
+
+    def evaluate(self, element, xyz):
+        """Evaluate the basis functions of an element at a position
+
+        Parameters
+        ----------
+        element : int
+            Element index in the mesh
+        xyz : Iterable of float
+            Position in global coordinates
+
+        Returns
+        -------
+        numpy.ndarray
+            Values of the element's basis functions in hierarchical order
+
+        """
+        # Largest supported order (10) has 286 modes
+        psi = np.zeros(286)
+        n = c_int()
+        xyz = (c_double*3)(*xyz)
+        _dll.openmc_meshfet_filter_evaluate(
+            self._index, element, xyz,
+            psi.ctypes.data_as(POINTER(c_double)), n)
+        return psi[:n.value]
+
+
 class MeshSurfaceFilter(Filter):
     """MeshSurface filter stored internally.
 
@@ -726,6 +819,7 @@ _FILTER_TYPE_MAP = {
     'materialfrom': MaterialFromFilter,
     'mesh': MeshFilter,
     'meshborn': MeshBornFilter,
+    'meshfet': MeshFETFilter,
     'meshmaterial': MeshMaterialFilter,
     'meshsurface': MeshSurfaceFilter,
     'mu': MuFilter,

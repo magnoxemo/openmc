@@ -27,7 +27,7 @@ _FILTER_TYPES = (
     'delayedgroup', 'energyfunction', 'cellfrom', 'materialfrom', 'legendre',
     'spatiallegendre', 'sphericalharmonics', 'zernike', 'zernikeradial', 'particle',
     'particleproduction', 'cellinstance', 'collision', 'time', 'parentnuclide',
-    'weight', 'meshborn', 'meshsurface', 'meshmaterial', 'reaction',
+    'weight', 'meshborn', 'meshsurface', 'meshmaterial', 'reaction', 'meshfet',
 )
 
 def _mesh_current_names(mesh):
@@ -1348,6 +1348,362 @@ class MeshSurfaceFilter(MeshFilter):
 
         # Initialize a Pandas DataFrame from the mesh dictionary
         return pd.concat([df, pd.DataFrame(filter_dict)])
+
+
+def _scaled_jacobi(n, alpha, beta, z, t):
+    """Evaluate t^k P_k^(alpha,beta)(z/t) for k = 0..n on arrays z and t."""
+    out = [np.ones_like(z)]
+    if n >= 1:
+        out.append(0.5*((alpha + beta + 2)*z + (alpha - beta)*t))
+    ab = alpha + beta
+    d = alpha*alpha - beta*beta
+    for k in range(1, n):
+        a = 2*(k + 1)*(k + ab + 1)*(2*k + ab)
+        b = 2*k + ab + 1
+        c = (2*k + ab + 2)*(2*k + ab)
+        e = 2*(k + alpha)*(k + beta)*(2*k + ab + 2)
+        out.append((b*(c*z + d*t)*out[k] - e*t*t*out[k - 1]) / a)
+    return out
+
+
+def _dubiner_tet(order, lam):
+    """Orthonormal Dubiner basis on a tetrahedron.
+
+    Mirrors fet::eval_tet in the C++ library.
+
+    Parameters
+    ----------
+    order : int
+        Maximum total degree
+    lam : numpy.ndarray
+        Barycentric coordinates of shape (..., 4) with respect to the
+        element's vertices (A, B, C, D), D collapsed
+
+    Returns
+    -------
+    numpy.ndarray
+        Basis values of shape (..., n_modes(order)) in hierarchical order
+
+    """
+    lam = np.asarray(lam, dtype=float)
+    t2 = lam[..., 0] + lam[..., 1]
+    t3 = t2 + lam[..., 2]
+    gamma = 1.0 - 2.0*lam[..., 3]
+    leg = _scaled_jacobi(order, 0, 0, lam[..., 1] - lam[..., 0], t2)
+    values = {}
+    for p in range(order + 1):
+        jac_q = _scaled_jacobi(order - p, 0, 2*p + 1, 2*t2 - t3, t3)
+        for q in range(order - p + 1):
+            jac_r = _scaled_jacobi(order - p - q, 0, 2*(p + q) + 2, gamma,
+                                   np.ones_like(gamma))
+            for r in range(order - p - q + 1):
+                k = p + q + r
+                norm = np.sqrt((2*p + 1)*(p + q + 1)*(2*k + 3)/3)
+                values[p, q, r] = norm*leg[p]*jac_q[q]*jac_r[r]
+    modes = MeshFETFilter.modes(order)
+    return np.stack([values[tuple(m)] for m in modes], axis=-1)
+
+
+class MeshFETFilter(MeshFilter):
+    r"""Element-wise functional expansion tally on an unstructured mesh.
+
+    Each linear tetrahedron :math:`e` of the mesh carries an orthogonal Dubiner
+    expansion of total degree :math:`N_e`. The filter has one bin per
+    (element, mode) pair and weights each collision by the value of the basis
+    function :math:`\psi_i` at the collision site. The basis is normalized so
+    that :math:`\int_e \psi_i \psi_j \, dV = V_e \delta_{ij}`; the expansion
+    coefficients are therefore :math:`a_i = t_i / V_e` where :math:`t_i` is the
+    tally result, and the reconstructed distribution is
+    :math:`f(\mathbf{r}) = \sum_i a_i \psi_i(\mathbf{r})`. Mode 0 is identically
+    one, so its coefficient is the element average.
+
+    Modes are ordered hierarchically by total degree :math:`k = p + q + r`,
+    then by :math:`p` and :math:`q`, so the first :meth:`n_modes` ``(N)`` modes
+    of an element form the order-:math:`N` basis. The vertex order of each
+    element's connectivity defines its basis orientation, with the fourth
+    vertex collapsed.
+
+    Only collision and analog estimators are supported.
+
+    .. versionadded:: 0.15.4
+
+    Parameters
+    ----------
+    mesh : openmc.UnstructuredMesh
+        Mesh of linear tetrahedra to expand over
+    order : int or Iterable of int
+        Expansion order on every element, or one order per element. A negative
+        order excludes that element from the tally.
+    filter_id : int
+        Unique identifier for the filter
+
+    Attributes
+    ----------
+    mesh : openmc.UnstructuredMesh
+        Mesh of linear tetrahedra to expand over
+    order : int or numpy.ndarray
+        Expansion order on every element, or one order per element
+    orders : numpy.ndarray or None
+        Expansion order of each element, or None if the number of elements is
+        not yet known
+    translation : Iterable of float
+        This array specifies a vector that is used to translate (shift) the mesh
+        for this filter
+    id : int
+        Unique identifier for the filter
+    bins : numpy.ndarray
+        Array of shape (num_bins, 4) giving the element index and mode indices
+        (p, q, r) of each filter bin
+    num_bins : Integral
+        The number of filter bins
+
+    """
+
+    def __init__(self, mesh, order=0, filter_id=None):
+        self._order = None
+        super().__init__(mesh, filter_id)
+        self.order = order
+
+    def __hash__(self):
+        string = type(self).__name__ + '\n'
+        string += '{: <16}=\t{}\n'.format('\tMesh ID', self.mesh.id)
+        string += '{: <16}=\t{}\n'.format('\tOrder', self._order_string())
+        return hash(string)
+
+    def __repr__(self):
+        string = super().__repr__()
+        string += '{: <16}=\t{}\n'.format('\tOrder', self._order_string())
+        return string
+
+    def _order_string(self):
+        if isinstance(self.order, np.ndarray):
+            return hashlib.sha1(self.order.tobytes()).hexdigest()
+        return str(self.order)
+
+    @staticmethod
+    def n_modes(order):
+        """Number of tetrahedral modes of total degree up to `order`
+
+        Parameters
+        ----------
+        order : int
+            Expansion order
+
+        Returns
+        -------
+        int
+            Number of modes
+
+        """
+        if order < 0:
+            return 0
+        return (order + 1)*(order + 2)*(order + 3) // 6
+
+    @staticmethod
+    def modes(order):
+        """Mode indices (p, q, r) in hierarchical order
+
+        Parameters
+        ----------
+        order : int
+            Expansion order
+
+        Returns
+        -------
+        numpy.ndarray
+            Array of shape (n_modes(order), 3)
+
+        """
+        out = [(p, q, k - p - q) for k in range(order + 1)
+               for p in range(k + 1) for q in range(k - p + 1)]
+        return np.array(out, dtype=int).reshape(-1, 3)
+
+    @MeshFilter.mesh.setter
+    def mesh(self, mesh):
+        cv.check_type('filter mesh', mesh, openmc.UnstructuredMesh)
+        self._mesh = mesh
+        self._update_bins()
+
+    @property
+    def order(self):
+        return self._order
+
+    @order.setter
+    def order(self, order):
+        if isinstance(order, Integral):
+            self._order = int(order)
+        else:
+            cv.check_type('mesh FET orders', order, Iterable, Integral)
+            self._order = np.asarray(order, dtype=int)
+        self._update_bins()
+
+    @property
+    def orders(self):
+        if isinstance(self._order, np.ndarray):
+            return self._order
+        if self._order is not None and self.mesh.has_statepoint_data:
+            return np.full(len(self.mesh.volumes), self._order, dtype=int)
+        return None
+
+    def _update_bins(self):
+        orders = self.orders
+        if orders is None:
+            self.bins = np.empty((0, 4), dtype=int)
+            return
+        orders = np.maximum(orders, -1)
+        table = self.modes(max(orders.max(initial=-1), 0))
+        counts = ((orders + 1)*(orders + 2)*(orders + 3)) // 6
+        elements = np.repeat(np.arange(len(orders)), counts)
+        starts = np.cumsum(counts) - counts
+        local = np.arange(counts.sum()) - np.repeat(starts, counts)
+        self.bins = np.column_stack((elements, table[local]))
+
+    def check_bins(self, bins):
+        pass
+
+    def can_merge(self, other):
+        return False
+
+    @classmethod
+    def from_hdf5(cls, group, **kwargs):
+        if group['type'][()].decode() != cls.short_name.lower():
+            raise ValueError("Expected HDF5 data for filter type '"
+                             + cls.short_name.lower() + "' but got '"
+                             + group['type'][()].decode() + " instead")
+
+        if 'meshes' not in kwargs:
+            raise ValueError(cls.__name__ + " requires a 'meshes' keyword "
+                             "argument.")
+
+        mesh_obj = kwargs['meshes'][group['bins'][()]]
+        filter_id = int(group.name.split('/')[-1].lstrip('filter '))
+        out = cls(mesh_obj, group['orders'][()], filter_id=filter_id)
+
+        translation = group.get('translation')
+        if translation:
+            out.translation = translation[()]
+
+        rotation = group.get('rotation')
+        if rotation:
+            out.rotation = rotation[()]
+
+        return out
+
+    def to_xml_element(self):
+        """Return XML Element representing the Filter.
+
+        Returns
+        -------
+        element : lxml.etree._Element
+            XML element containing filter data
+
+        """
+        element = super().to_xml_element()
+        if isinstance(self.order, np.ndarray):
+            subelement = ET.SubElement(element, 'orders')
+            subelement.text = ' '.join(map(str, self.order))
+        else:
+            subelement = ET.SubElement(element, 'order')
+            subelement.text = str(self.order)
+        return element
+
+    @classmethod
+    def from_xml_element(cls, elem: ET.Element, **kwargs) -> MeshFETFilter:
+        out = super().from_xml_element(elem, **kwargs)
+        orders = get_elem_list(elem, 'orders', int)
+        out.order = orders if orders else int(get_text(elem, 'order'))
+        return out
+
+    def reconstruct(self, values, elements, points):
+        """Evaluate the expanded distribution at points inside elements.
+
+        Requires a mesh loaded from a statepoint, whose vertex order defines
+        the basis orientation of each element.
+
+        Parameters
+        ----------
+        values : numpy.ndarray
+            Tally values of all filter bins, e.g. the mean of one score and
+            nuclide, of length :attr:`num_bins`
+        elements : Iterable of int
+            Element containing each point
+        points : numpy.ndarray
+            Positions in global coordinates of shape (n, 3)
+
+        Returns
+        -------
+        numpy.ndarray
+            Distribution per unit volume at each point
+
+        """
+        if not self.mesh.has_statepoint_data:
+            raise ValueError('Reconstruction requires a mesh loaded from a '
+                             'statepoint file.')
+        if self.rotation is not None:
+            raise NotImplementedError('Reconstruction does not support '
+                                      'rotated mesh filters.')
+        values = np.asarray(values, dtype=float).ravel()
+        if values.size != self.num_bins:
+            raise ValueError(f'Expected {self.num_bins} values but got '
+                             f'{values.size}.')
+        elements = np.asarray(elements, dtype=int)
+        points = np.atleast_2d(np.asarray(points, dtype=float))
+        if self.translation is not None:
+            points = points - self.translation
+
+        orders = self.orders
+        counts = ((orders + 1)*(orders + 2)*(orders + 3)) // 6
+        counts[orders < 0] = 0
+        offsets = np.concatenate(([0], np.cumsum(counts)))
+        vertices = self.mesh.vertices
+        connectivity = self.mesh.connectivity
+
+        out = np.zeros(len(elements))
+        for i, (e, x) in enumerate(zip(elements, points)):
+            if orders[e] < 0:
+                continue
+            a, b, c, d = vertices[connectivity[e][:4]]
+            jac = np.column_stack((a - d, b - d, c - d))
+            lam = np.linalg.solve(jac, x - d)
+            psi = _dubiner_tet(orders[e], np.append(lam, 1.0 - lam.sum()))
+            volume = abs(np.linalg.det(jac)) / 6.0
+            out[i] = values[offsets[e]:offsets[e + 1]] @ psi / volume
+        return out
+
+    def get_pandas_dataframe(self, data_size, stride, **kwargs):
+        """Builds a Pandas DataFrame for the Filter's bins.
+
+        This method constructs a Pandas DataFrame object for the filter with
+        columns annotated by filter bin information. This is a helper method for
+        :meth:`Tally.get_pandas_dataframe`.
+
+        Parameters
+        ----------
+        data_size : int
+            The total number of bins in the tally corresponding to this filter
+        stride : int
+            Stride in memory for the filter
+
+        Returns
+        -------
+        pandas.DataFrame
+            A Pandas DataFrame with columns for the element index and the mode
+            indices (p, q, r) of each filter bin. The number of rows in the
+            DataFrame is the same as the total number of bins in the
+            corresponding tally, with the filter bin appropriately tiled to map
+            to the corresponding tally bins.
+
+        See also
+        --------
+        Tally.get_pandas_dataframe(), CrossFilter.get_pandas_dataframe()
+
+        """
+        mesh_key = f'mesh {self.mesh.id}'
+        filter_dict = {}
+        for column, label in enumerate(('element', 'p', 'q', 'r')):
+            filter_dict[mesh_key, label] = _repeat_and_tile(
+                self.bins[:, column], stride, data_size)
+        return pd.DataFrame(filter_dict)
 
 
 class CollisionFilter(Filter):
