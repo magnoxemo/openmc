@@ -7,23 +7,23 @@
 namespace openmc {
 namespace fet {
 
-AffineTetMap::AffineTetMap(const std::array<Position, 4>& vertices)
-  : origin_ {vertices[3]}
+TetElementMapping::TetElementMapping(const vector<Position>& vertices)
+  : PhysicalToParametricMapping(vertices)
 {
-  // Columns of the map from barycentric (lambda_A, lambda_B, lambda_C) to
-  // physical coordinates relative to vertex D
-  Position a = vertices[0] - origin_;
-  Position b = vertices[1] - origin_;
-  Position c = vertices[2] - origin_;
+  if (vertices_.size() != 4)
+    fatal_error("A tetrahedral element must have 4 vertices.");
 
-  // Inverse of the matrix with columns (a, b, c): rows are the cross products
-  // divided by the determinant
-  Position bc = b.cross(c);
-  Position ca = c.cross(a);
-  Position ab = a.cross(b);
-  double det = a.dot(bc);
+  origin_ = vertices_[3];
+  const Position a = vertices_[0] - origin_;
+  const Position b = vertices_[1] - origin_;
+  const Position c = vertices_[2] - origin_;
 
-  double scale = a.norm() * b.norm() * c.norm();
+  const Position bc = b.cross(c);
+  const Position ca = c.cross(a);
+  const Position ab = a.cross(b);
+  const double det = a.dot(bc);
+
+  const double scale = a.norm() * b.norm() * c.norm();
   if (std::abs(det) <= 1.0e-14 * scale) {
     fatal_error("Degenerate tetrahedron encountered while building a "
                 "functional expansion tally map.");
@@ -34,13 +34,13 @@ AffineTetMap::AffineTetMap(const std::array<Position, 4>& vertices)
   volume_ = std::abs(det) / 6.0;
 }
 
-void AffineTetMap::barycentric(Position r, double lambda[4]) const
+void TetElementMapping::parametric_coordinates(Position r, double* coords) const
 {
-  Position d = r - origin_;
-  lambda[0] = inv_[0] * d.x + inv_[1] * d.y + inv_[2] * d.z;
-  lambda[1] = inv_[3] * d.x + inv_[4] * d.y + inv_[5] * d.z;
-  lambda[2] = inv_[6] * d.x + inv_[7] * d.y + inv_[8] * d.z;
-  lambda[3] = 1.0 - lambda[0] - lambda[1] - lambda[2];
+  const Position d = r - origin_;
+  coords[0] = inv_[0] * d.x + inv_[1] * d.y + inv_[2] * d.z;
+  coords[1] = inv_[3] * d.x + inv_[4] * d.y + inv_[5] * d.z;
+  coords[2] = inv_[6] * d.x + inv_[7] * d.y + inv_[8] * d.z;
+  coords[3] = 1.0 - coords[0] - coords[1] - coords[2];
 }
 
 } // namespace fet

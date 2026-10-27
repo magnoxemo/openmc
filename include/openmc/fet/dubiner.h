@@ -58,28 +58,6 @@ std::array<int, 2> tri_mode(int index);
 
 //==============================================================================
 // Basis evaluation
-//
-// The collapsed (Duffy) coordinates of a tetrahedron with vertices A, B, C, D
-// (D collapsed) are related to the barycentric coordinates by
-//
-//   lambda_A = (1+gamma)(1+zeta)(1-eta)/8,  lambda_B =
-//   (1+gamma)(1+zeta)(1+eta)/8 lambda_C = (1+gamma)(1-zeta)/4,         lambda_D
-//   = (1-gamma)/2
-//
-// and the Dubiner mode (p, q, r) is
-//
-//   P_p(eta) ((1+zeta)/2)^p P_q^(0,2p+1)(zeta)
-//     ((1+gamma)/2)^(p+q) P_r^(0,2p+2q+2)(gamma)
-//
-// which is a polynomial of total degree p+q+r in the physical coordinates. It
-// is evaluated here directly from barycentric coordinates using scaled Jacobi
-// recurrences, which avoids the 0/0 of the collapsed coordinates at the
-// collapsed vertex and edge. Modes are scaled so that over any tetrahedron T
-//
-//   integral_T psi_i psi_j dV = |T| delta_ij
-//
-// making mode 0 identically one and the element average of f equal to its
-// zeroth coefficient.
 //==============================================================================
 
 //! Evaluate all tetrahedral modes of total degree <= order

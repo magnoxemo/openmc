@@ -1,48 +1,65 @@
 //! \file element_map.h
-//! \brief Affine maps from physical space to barycentric coordinates of
-//! simplex elements.
+//! \brief Maps from physical space to the parametric coordinates of mesh
+//! elements.
 
 #ifndef OPENMC_FET_ELEMENT_MAP_H
 #define OPENMC_FET_ELEMENT_MAP_H
 
-#include <array>
-
+#include "openmc/array.h"
 #include "openmc/position.h"
+#include "openmc/vector.h"
 
 namespace openmc {
 namespace fet {
 
 //==============================================================================
-//! Affine map of a linear tetrahedron with vertices (A, B, C, D).
-//!
-//! The vertex order defines the basis orientation: D is the collapsed vertex
-//! of the Duffy transform used by the Dubiner basis. Elements of either
+//! Abstract base class for the mapping of a physical position onto the
+//! parametric coordinates of an element. Every element shape implements this
+//! interface so that the filter does not depend on a particular shape. The
+//! same interface can later serve surface tallies (e.g. current).
+//==============================================================================
+
+class PhysicalToParametricMapping {
+public:
+  explicit PhysicalToParametricMapping(vector<Position> vertices)
+    : vertices_(std::move(vertices))
+  {}
+  virtual ~PhysicalToParametricMapping() = default;
+
+  //! Number of parametric coordinates written by parametric_coordinates
+  virtual int n_coordinates() const = 0;
+
+  //! Compute the parametric coordinates of a point
+  //
+  //! \param[in] r Position in physical space
+  //! \param[out] coords Array of at least n_coordinates() values
+  virtual void parametric_coordinates(Position r, double* coords) const = 0;
+
+  //! Unsigned volume of the element
+  double volume() const { return volume_; }
+
+protected:
+  vector<Position> vertices_; //!< Vertices of the element
+  double volume_ {0.0};       //!< Unsigned volume of the element
+};
+
+//==============================================================================
+//! Linear tetrahedron. The coordinates are the barycentric coordinates with
+//! respect to the vertices (A, B, C, D) in the order given; D is the collapsed
+//! vertex of the Duffy transform used by the Dubiner basis. Elements of either
 //! orientation are accepted.
 //==============================================================================
 
-class AffineTetMap {
+class TetElementMapping : public PhysicalToParametricMapping {
 public:
-  AffineTetMap() = default;
+  explicit TetElementMapping(const vector<Position>& vertices);
 
-  //! Construct the map from the element's vertices
-  //
-  //! \param[in] vertices Vertices (A, B, C, D) of the tetrahedron
-  explicit AffineTetMap(const std::array<Position, 4>& vertices);
-
-  //! Compute the barycentric coordinates of a point
-  //
-  //! \param[in] r Position in physical space
-  //! \param[out] lambda Barycentric coordinates with respect to (A, B, C, D)
-  void barycentric(Position r, double lambda[4]) const;
-
-  //! Volume of the tetrahedron
-  double volume() const { return volume_; }
+  int n_coordinates() const override { return 4; }
+  void parametric_coordinates(Position r, double* coords) const override;
 
 private:
-  Position origin_;          //!< Vertex D
-  std::array<double, 9> inv_ //!< Row-major inverse of [A-D, B-D, C-D]
-    {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-  double volume_ {0.0}; //!< Unsigned volume
+  Position origin_;         //!< Vertex D
+  std::array<double, 9> inv_ {}; //!< Row-major inverse of [A-D, B-D, C-D]
 };
 
 } // namespace fet

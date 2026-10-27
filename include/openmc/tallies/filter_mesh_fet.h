@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "openmc/fet/element_map.h"
+#include "openmc/memory.h"
 #include "openmc/tallies/filter_mesh.h"
 #include "openmc/vector.h"
 
@@ -70,17 +71,17 @@ public:
   //! Number of mesh elements covered by the filter
   int n_elements() const { return static_cast<int>(maps_.size()); }
 
-  //! Affine map of an element
-  const fet::AffineTetMap& element_map(int element) const
+  //! Mapping from physical space to the parametric space of an element
+  const fet::PhysicalToParametricMapping& element_map(int element) const
   {
-    return maps_[element];
+    return *maps_[element];
   }
 
   //! Element containing a filter bin
   int element_from_bin(int bin) const;
 
   //! Unsigned volume of an element as seen by the expansion
-  double volume(int element) const { return maps_[element].volume(); }
+  double volume(int element) const { return maps_[element]->volume(); }
 
   //----------------------------------------------------------------------------
   // Evaluation
@@ -120,10 +121,11 @@ private:
   //----------------------------------------------------------------------------
   // Data members
 
-  vector<fet::AffineTetMap> maps_; //!< Affine map of each element
-  vector<int> orders_;             //!< Expansion order of each element
-  vector<int> offsets_;            //!< First bin of each element (size n+1)
-  int max_order_ {-1};             //!< Maximum order over all elements
+  vector<unique_ptr<fet::PhysicalToParametricMapping>>
+    maps_;              //!< Mapping of each element
+  vector<int> orders_;  //!< Expansion order of each element
+  vector<int> offsets_; //!< First bin of each element (size n+1)
+  int max_order_ {-1};  //!< Maximum order over all elements
 };
 
 } // namespace openmc
