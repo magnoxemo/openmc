@@ -19,12 +19,13 @@ namespace openmc {
 //! has one bin per (element, mode) pair, stored element-major: the bins of
 //! element e are [offset(e), offset(e+1)) and follow the hierarchical mode
 //! ordering of fet::tet_mode_index. The weight of each bin is the value of
-//! the basis function at the event location, so the expansion coefficient of
-//! mode i on element e is
+//! the unnormalized basis function at the event location, so that no square
+//! roots are evaluated during transport. With the mode norm N_i from
+//! fet::tet_mode_norm, the expansion coefficient of mode i on element e is
 //!
-//!   a_i = (tally in bin offset(e) + i) / V_e
+//!   a_i = N_i * (tally in bin offset(e) + i) / V_e
 //!
-//! and the reconstructed distribution is f(r) = sum_i a_i psi_i(r). Only
+//! and the reconstructed distribution is f(r) = sum_i a_i N_i psi_i(r). Only
 //! analog and collision estimators are supported.
 //!
 //! The per-element orders determine the number of bins and must therefore be

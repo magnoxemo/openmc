@@ -60,7 +60,18 @@ std::array<int, 2> tri_mode(int index);
 // Basis evaluation
 //==============================================================================
 
-//! Evaluate all tetrahedral modes of total degree <= order
+//! Normalization factor of tetrahedral mode (p, q, r)
+//
+//! The modes returned by eval_tet are not normalized, to keep the square roots
+//! out of transport. Multiplying mode i by its norm gives the basis with
+//! integral_T psi_i psi_j dV = |T| delta_ij over any tetrahedron T, in which
+//! mode 0 is identically one. Intended for post-processing.
+double tet_mode_norm(int p, int q, int r);
+
+//! Normalization factor of triangular mode (p, q); see tet_mode_norm
+double tri_mode_norm(int p, int q);
+
+//! Evaluate all tetrahedral modes of total degree <= order, unnormalized
 //
 //! \param[in] order Maximum total degree, 0 <= order <= MAX_ORDER
 //! \param[in] lambda Barycentric coordinates with respect to (A, B, C, D)
@@ -68,10 +79,8 @@ std::array<int, 2> tri_mode(int index);
 //!   hierarchical order
 void eval_tet(int order, const double lambda[4], double* out);
 
-//! Evaluate all triangular modes of total degree <= order
-//
-//! Normalized so that integral_T psi_i psi_j dA = |T| delta_ij with vertex C
-//! collapsed.
+//! Evaluate all triangular modes of total degree <= order, unnormalized, with
+//! vertex C collapsed
 //
 //! \param[in] order Maximum total degree, 0 <= order <= MAX_ORDER
 //! \param[in] lambda Barycentric coordinates with respect to (A, B, C)

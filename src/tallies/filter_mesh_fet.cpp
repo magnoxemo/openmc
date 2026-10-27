@@ -39,7 +39,8 @@ void MeshFETFilter::set_mesh(int32_t mesh)
       model::meshes[mesh_]->id_, id()));
   }
 
-  // Build the mapping of each element. Only linear tetrahedra are supported for now.
+  // Build the mapping of each element. Only linear tetrahedra are supported for
+  // now.
   int n_elem = umesh->n_bins();
   maps_.clear();
   maps_.reserve(n_elem);
@@ -51,9 +52,11 @@ void MeshFETFilter::set_mesh(int32_t mesh)
         e, umesh->id_, conn.size()));
     }
     std::vector<Position> vertices;
-    vertices.reserve(4);
+    vertices.reserve(4); // Maybe I need to get waya from that at some point.
     for (int i = 0; i < 4; ++i)
       vertices.push_back(umesh->vertex(conn[i]));
+    // TODO:
+    // I will come back and implement this for other elemental mapping as well.
     maps_.push_back(make_unique<fet::TetElementMapping>(vertices));
   }
 
@@ -157,9 +160,14 @@ double MeshFETFilter::reconstruct(
 {
   double psi[fet::MAX_MODES_TET];
   int n = evaluate_basis(element, r, psi);
+  // The tallied modes are unnormalized. With normalization N_i, the
+  // coefficient is a_i = N_i * tally_i / V and the mode is N_i * psi_i.
   double f = 0.0;
-  for (int i = 0; i < n; ++i)
-    f += values[i] * psi[i];
+  for (int i = 0; i < n; ++i) {
+    auto m = fet::tet_mode(i);
+    double norm = fet::tet_mode_norm(m[0], m[1], m[2]);
+    f += norm * norm * values[i] * psi[i];
+  }
   return f / maps_[element]->volume();
 }
 
@@ -167,6 +175,7 @@ void MeshFETFilter::to_statepoint(hid_t filter_group) const
 {
   MeshFilter::to_statepoint(filter_group);
   write_dataset(filter_group, "basis", "dubiner");
+  write_dataset(filter_group, "normalized", 0);
   write_dataset(filter_group, "orders", orders_);
 }
 

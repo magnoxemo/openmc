@@ -69,6 +69,17 @@ void scaled_jacobi(
   }
 }
 
+double tet_mode_norm(int p, int q, int r)
+{
+  int k = p + q + r;
+  return std::sqrt((2 * p + 1) * (p + q + 1) * (2 * k + 3) / 3.0);
+}
+
+double tri_mode_norm(int p, int q)
+{
+  return std::sqrt((2 * p + 1) * (p + q + 1));
+}
+
 void eval_tet(int order, const double lambda[4], double* out)
 {
   // Homogeneous variables of the collapsed coordinates:
@@ -92,9 +103,7 @@ void eval_tet(int order, const double lambda[4], double* out)
       // P_r^(0,2p+2q+2)(gamma)
       scaled_jacobi(order - p - q, 0.0, 2 * (p + q) + 2, gamma, 1.0, jac_r);
       for (int r = 0; r <= order - p - q; ++r) {
-        int k = p + q + r;
-        double norm = std::sqrt((2 * p + 1) * (p + q + 1) * (2 * k + 3) / 3.0);
-        out[tet_mode_index(p, q, r)] = norm * leg[p] * jac_q[q] * jac_r[r];
+        out[tet_mode_index(p, q, r)] = leg[p] * jac_q[q] * jac_r[r];
       }
     }
   }
@@ -115,8 +124,7 @@ void eval_tri(int order, const double lambda[3], double* out)
     // P_q^(0,2p+1)(zeta)
     scaled_jacobi(order - p, 0.0, 2 * p + 1, zeta, 1.0, jac_q);
     for (int q = 0; q <= order - p; ++q) {
-      double norm = std::sqrt((2 * p + 1) * (p + q + 1));
-      out[tri_mode_index(p, q)] = norm * leg[p] * jac_q[q];
+      out[tri_mode_index(p, q)] = leg[p] * jac_q[q];
     }
   }
 }
