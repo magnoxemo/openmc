@@ -1,7 +1,3 @@
-//! \file element_map.h
-//! \brief Maps from physical space to the parametric coordinates of mesh
-//! elements.
-
 #ifndef OPENMC_FET_ELEMENT_MAP_H
 #define OPENMC_FET_ELEMENT_MAP_H
 
