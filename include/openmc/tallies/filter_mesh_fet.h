@@ -14,10 +14,10 @@ namespace openmc {
 //! Element-wise functional expansion tally (FET) on an unstructured mesh of
 //! linear tetrahedra.
 //!
-//! Each element e carries an orthogonal Dubiner expansion of total degree
-//! order(e); a negative order excludes the element from the tally. The filter
-//! has one bin per (element, mode) pair, stored element-major: the bins of
-//! element e are [offset(e), offset(e+1)) and follow the hierarchical mode
+//! Each element e carries an orthogonal tensor Legendre/Jacobi expansion
+//! P_i(eta) P_j^(0,1)(zeta) P_k^(0,2)(gamma) with i, j, k <= order(e); a
+//! negative order excludes the element from the tally. The filter has one bin per (element, mode) pair, stored element-major: the bins of
+//! element e are [offset(e), offset(e+1)) and follow the shell mode
 //! ordering of fet::tet_mode_index. The weight of each bin is the value of
 //! the unnormalized basis function at the event location, so that no square
 //! roots are evaluated during transport. With the mode norm N_i from

@@ -42,7 +42,7 @@ protected:
 //==============================================================================
 //! Linear tetrahedron. The coordinates are the barycentric coordinates with
 //! respect to the vertices (A, B, C, D) in the order given; D is the collapsed
-//! vertex of the Duffy transform used by the Dubiner basis. Elements of either
+//! vertex of the Duffy transform used by the FET basis. Elements of either
 //! orientation are accepted.
 //==============================================================================
 

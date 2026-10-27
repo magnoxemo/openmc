@@ -160,13 +160,12 @@ double MeshFETFilter::reconstruct(
 {
   double psi[fet::MAX_MODES_TET];
   int n = evaluate_basis(element, r, psi);
-  // The tallied modes are unnormalized. With normalization N_i, the
+  // The tallied modes are unnormalized. With squared normalization N_i^2, the
   // coefficient is a_i = N_i * tally_i / V and the mode is N_i * psi_i.
   double f = 0.0;
   for (int i = 0; i < n; ++i) {
     auto m = fet::tet_mode(i);
-    double norm = fet::tet_mode_norm(m[0], m[1], m[2]);
-    f += norm * norm * values[i] * psi[i];
+    f += fet::tet_mode_norm_sq(m[0], m[1], m[2]) * values[i] * psi[i];
   }
   return f / maps_[element]->volume();
 }
@@ -174,7 +173,7 @@ double MeshFETFilter::reconstruct(
 void MeshFETFilter::to_statepoint(hid_t filter_group) const
 {
   MeshFilter::to_statepoint(filter_group);
-  write_dataset(filter_group, "basis", "dubiner");
+  write_dataset(filter_group, "basis", "legendre_jacobi");
   write_dataset(filter_group, "normalized", 0);
   write_dataset(filter_group, "orders", orders_);
 }

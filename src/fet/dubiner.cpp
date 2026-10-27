@@ -1,8 +1,7 @@
 #include "openmc/fet/dubiner.h"
 
+#include <algorithm>
 #include <cmath>
-
-#include "openmc/error.h"
 
 namespace openmc {
 namespace fet {
@@ -11,39 +10,54 @@ namespace fet {
 // Mode indexing
 //==============================================================================
 
-int tet_mode_index(int p, int q, int r)
+int tet_mode_index(int i, int j, int k)
 {
-  int k = p + q + r;
-  return n_modes_tet(k - 1) + p * (k + 1) - p * (p - 1) / 2 + q;
+  int m = std::max({i, j, k});
+  int base = n_modes_tet(m - 1);
+  if (i == m)
+    return base + j * (m + 1) + k;
+  if (j == m)
+    return base + (m + 1) * (m + 1) + i * (m + 1) + k;
+  return base + (m + 1) * (m + 1) + m * (m + 1) + i * m + j;
 }
 
 std::array<int, 3> tet_mode(int index)
 {
-  int k = 0;
-  while (n_modes_tet(k) <= index)
-    ++k;
-  int local = index - n_modes_tet(k - 1);
-  for (int p = 0; p <= k; ++p) {
-    int n_q = k - p + 1;
-    if (local < n_q)
-      return {p, local, k - p - local};
-    local -= n_q;
-  }
-  fatal_error("Invalid tetrahedral FET mode index.");
+  int m = 0;
+  while (n_modes_tet(m) <= index)
+    ++m;
+
+  int local = index - n_modes_tet(m - 1);
+  int n_i = (m + 1) * (m + 1);
+
+  if (local < n_i)
+    return {m, local / (m + 1), local % (m + 1)};
+  local -= n_i;
+
+  int n_j = m * (m + 1);
+  if (local < n_j)
+    return {local / (m + 1), m, local % (m + 1)};
+  local -= n_j;
+
+  return {local / m, local % m, m};
 }
 
-int tri_mode_index(int p, int q)
+int tri_mode_index(int i, int j)
 {
-  return n_modes_tri(p + q - 1) + p;
+  int m = std::max(i, j);
+  int base = n_modes_tri(m - 1);
+  return i == m ? base + j : base + (m + 1) + i;
 }
 
 std::array<int, 2> tri_mode(int index)
 {
-  int k = 0;
-  while (n_modes_tri(k) <= index)
-    ++k;
-  int p = index - n_modes_tri(k - 1);
-  return {p, k - p};
+  int m = 0;
+  while (n_modes_tri(m) <= index)
+    ++m;
+  int local = index - n_modes_tri(m - 1);
+  if (local <= m)
+    return {m, local};
+  return {local - (m + 1), m};
 }
 
 //==============================================================================
@@ -69,64 +83,66 @@ void scaled_jacobi(
   }
 }
 
-double tet_mode_norm(int p, int q, int r)
+double tet_mode_norm_sq(int i, int j, int k)
 {
-  int k = p + q + r;
-  return std::sqrt((2 * p + 1) * (p + q + 1) * (2 * k + 3) / 3.0);
+  return (2 * i + 1) * (j + 1) * (2 * k + 3) / 3.0;
 }
 
-double tri_mode_norm(int p, int q)
+double tet_mode_norm(int i, int j, int k)
 {
-  return std::sqrt((2 * p + 1) * (p + q + 1));
+  return std::sqrt(tet_mode_norm_sq(i, j, k));
+}
+
+double tri_mode_norm_sq(int i, int j)
+{
+  return (2 * i + 1) * (j + 1);
+}
+
+double tri_mode_norm(int i, int j)
+{
+  return std::sqrt(tri_mode_norm_sq(i, j));
 }
 
 void eval_tet(int order, const double lambda[4], double* out)
 {
-  // Homogeneous variables of the collapsed coordinates:
-  //   t2 = (1+zeta)(1+gamma)/4, eta = (lambda_B - lambda_A) / t2
-  //   t3 = (1+gamma)/2,         zeta = 2 t2 / t3 - 1
-  //   gamma = 1 - 2 lambda_D
+  // Collapsed coordinates of (A, B, C, D) with D collapsed first:
+  //   gamma = 1 - 2 lambda_D, zeta = (2 t2 - t3) / t3, eta = (lambda_B -
+  //   lambda_A) / t2 with t2 = lambda_A + lambda_B, t3 = t2 + lambda_C
+  constexpr double tiny = 1.0e-14;
   double t2 = lambda[0] + lambda[1];
   double t3 = t2 + lambda[2];
   double gamma = 1.0 - 2.0 * lambda[3];
+  double eta = t2 > tiny ? (lambda[1] - lambda[0]) / t2 : 0.0;
+  double zeta = t3 > tiny ? (2.0 * t2 - t3) / t3 : 0.0;
 
-  // t2^p P_p(eta)
   double leg[MAX_ORDER + 1];
-  scaled_jacobi(order, 0.0, 0.0, lambda[1] - lambda[0], t2, leg);
-
   double jac_q[MAX_ORDER + 1];
   double jac_r[MAX_ORDER + 1];
-  for (int p = 0; p <= order; ++p) {
-    // t3^q P_q^(0,2p+1)(zeta)
-    scaled_jacobi(order - p, 0.0, 2 * p + 1, 2.0 * t2 - t3, t3, jac_q);
-    for (int q = 0; q <= order - p; ++q) {
-      // P_r^(0,2p+2q+2)(gamma)
-      scaled_jacobi(order - p - q, 0.0, 2 * (p + q) + 2, gamma, 1.0, jac_r);
-      for (int r = 0; r <= order - p - q; ++r) {
-        out[tet_mode_index(p, q, r)] = leg[p] * jac_q[q] * jac_r[r];
-      }
-    }
-  }
+  scaled_jacobi(order, 0.0, 0.0, eta, 1.0, leg);
+  scaled_jacobi(order, 0.0, 1.0, zeta, 1.0, jac_q);
+  scaled_jacobi(order, 0.0, 2.0, gamma, 1.0, jac_r);
+
+  for (int i = 0; i <= order; ++i)
+    for (int j = 0; j <= order; ++j)
+      for (int k = 0; k <= order; ++k)
+        out[tet_mode_index(i, j, k)] = leg[i] * jac_q[j] * jac_r[k];
 }
 
 void eval_tri(int order, const double lambda[3], double* out)
 {
-  // t2 = (1+zeta)/2, eta = (lambda_B - lambda_A) / t2, zeta = 1 - 2 lambda_C
+  constexpr double tiny = 1.0e-14;
   double t2 = lambda[0] + lambda[1];
   double zeta = 1.0 - 2.0 * lambda[2];
+  double eta = t2 > tiny ? (lambda[1] - lambda[0]) / t2 : 0.0;
 
-  // t2^p P_p(eta)
   double leg[MAX_ORDER + 1];
-  scaled_jacobi(order, 0.0, 0.0, lambda[1] - lambda[0], t2, leg);
-
   double jac_q[MAX_ORDER + 1];
-  for (int p = 0; p <= order; ++p) {
-    // P_q^(0,2p+1)(zeta)
-    scaled_jacobi(order - p, 0.0, 2 * p + 1, zeta, 1.0, jac_q);
-    for (int q = 0; q <= order - p; ++q) {
-      out[tri_mode_index(p, q)] = leg[p] * jac_q[q];
-    }
-  }
+  scaled_jacobi(order, 0.0, 0.0, eta, 1.0, leg);
+  scaled_jacobi(order, 0.0, 1.0, zeta, 1.0, jac_q);
+
+  for (int i = 0; i <= order; ++i)
+    for (int j = 0; j <= order; ++j)
+      out[tri_mode_index(i, j)] = leg[i] * jac_q[j];
 }
 
 } // namespace fet
