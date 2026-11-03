@@ -46,6 +46,25 @@ extern "C" double t_percentile(double p, int df);
 extern "C" void calc_pn_c(int n, double x, double pnx[]);
 
 //==============================================================================
+//! Calculate the Jacobi polynomials t^k P_k^(alpha,beta)(z/t) for k = 0..n.
+//!
+//! This is the homogenized three-term recurrence: it is a polynomial in (z, t)
+//! and stays finite as t -> 0. With t = 1 it reduces to the ordinary Jacobi
+//! polynomials P_k^(alpha,beta)(z). alpha = beta = 0 gives the Legendre
+//! polynomials.
+//!
+//! \param n     The maximum degree requested
+//! \param alpha Jacobi parameter alpha > -1
+//! \param beta  Jacobi parameter beta > -1
+//! \param z     Numerator of the argument
+//! \param t     Scaling (denominator of the argument)
+//! \param out   The requested values for degree 0 to n (inclusive)
+//==============================================================================
+
+void calc_jacobi(
+  int n, double alpha, double beta, double z, double t, double out[]);
+
+//==============================================================================
 //! Find the value of f(x) given a set of Legendre coefficients and the value
 //! of x.
 //!

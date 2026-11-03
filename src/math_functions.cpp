@@ -117,6 +117,25 @@ void calc_pn_c(int n, double x, double pnx[])
   }
 }
 
+void calc_jacobi(
+  int n, double alpha, double beta, double z, double t, double out[])
+{
+  out[0] = 1.0;
+  if (n == 0)
+    return;
+  out[1] = 0.5 * ((alpha + beta + 2.0) * z + (alpha - beta) * t);
+
+  double ab = alpha + beta;
+  double d = alpha * alpha - beta * beta;
+  for (int k = 1; k < n; ++k) {
+    double a = 2.0 * (k + 1) * (k + ab + 1) * (2 * k + ab);
+    double b = 2 * k + ab + 1;
+    double c = (2 * k + ab + 2) * (2 * k + ab);
+    double e = 2.0 * (k + alpha) * (k + beta) * (2 * k + ab + 2);
+    out[k + 1] = (b * (c * z + d * t) * out[k] - e * t * t * out[k - 1]) / a;
+  }
+}
+
 double evaluate_legendre(int n, const double data[], double x)
 {
   double* pnx = new double[n + 1];

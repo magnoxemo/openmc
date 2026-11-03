@@ -3,30 +3,31 @@
 
 #include <cstdint>
 
-#include "openmc/fet/element_map.h"
+#include "openmc/fet/fet_element.h"
 #include "openmc/memory.h"
 #include "openmc/tallies/filter_mesh.h"
 #include "openmc/vector.h"
 
 namespace openmc {
 
+class UnstructuredMesh;
+
 //==============================================================================
 //! Element-wise functional expansion tally (FET) on an unstructured mesh of
 //! linear tetrahedra.
 //!
-//! Each element e carries an orthogonal tensor Legendre/Jacobi expansion
-//! P_i(eta) P_j^(0,1)(zeta) P_k^(0,2)(gamma) with i, j, k <= order(e); a
-//! negative order excludes the element from the tally. The filter has one bin per (element, mode) pair, stored element-major: the bins of
-//! element e are [offset(e), offset(e+1)) and follow the shell mode
-//! ordering of fet::tet_mode_index. The weight of each bin is the value of
-//! the unnormalized basis function at the event location, so that no square
-//! roots are evaluated during transport. With the mode norm N_i from
-//! fet::tet_mode_norm, the expansion coefficient of mode i on element e is
+//! Each element e carries the orthogonal expansion of a fet::FETElement with
+//! mode indices up to order(e); a negative order excludes the element from the
+//! tally. The filter has one bin per (element, mode) pair, stored
+//! element-major: the bins of element e are [offset(e), offset(e+1)) in the
+//! mode order of the element. The weight of each bin is the value of the
+//! unnormalized mode at the event location, so that no square roots are
+//! evaluated during transport. With the squared mode norm N_i^2, the
+//! reconstructed distribution on element e is
 //!
-//!   a_i = N_i * (tally in bin offset(e) + i) / V_e
+//!   f(r) = sum_i N_i^2 * (tally in bin offset(e) + i) * psi_i(r) / measure_e
 //!
-//! and the reconstructed distribution is f(r) = sum_i a_i N_i psi_i(r). Only
-//! analog and collision estimators are supported.
+//! Only analog and collision estimators are supported.
 //!
 //! The per-element orders determine the number of bins and must therefore be
 //! set before any tally using this filter allocates its results.
@@ -69,62 +70,60 @@ public:
 
   int max_order() const { return max_order_; }
 
-  //! Number of mesh elements covered by the filter
-  int n_elements() const { return static_cast<int>(maps_.size()); }
+  //! Number of elements covered by the filter
+  int n_elements() const { return static_cast<int>(elements_.size()); }
 
-  //! Mapping from physical space to the parametric space of an element
-  const fet::PhysicalToParametricMapping& element_map(int element) const
+  const fet::FETElement& element(int element) const
   {
-    return *maps_[element];
+    return *elements_[element];
   }
 
   //! Element containing a filter bin
   int element_from_bin(int bin) const;
 
-  //! Unsigned volume of an element as seen by the expansion
-  double volume(int element) const { return maps_[element]->volume(); }
-
   //----------------------------------------------------------------------------
   // Evaluation
   //
-  // The basis orientation of an element is defined by the vertex order of the
-  // mesh that built this filter, which may differ between mesh interfaces.
-  // Coupled codes must therefore evaluate the expansion through these methods
-  // rather than rebuilding the basis from their own connectivity.
+  // The orientation of the modes of an element is defined by the vertex order
+  // of the mesh that built this filter, which may differ between mesh
+  // interfaces. Coupled codes must therefore evaluate the expansion through
+  // these methods rather than rebuilding the basis from their own connectivity.
 
   //! Apply the filter's translation and rotation to a global position
   Position mesh_position(Position r) const;
 
-  //! Evaluate the basis functions of an element
+  //! Evaluate the modes of an element
   //
-  //! \param[in] element Element index (mesh bin)
+  //! \param[in] element Element index
   //! \param[in] r Position in global coordinates
-  //! \param[out] psi Array of at least fet::n_modes_tet(order(element)) values
-  //! \return Number of basis functions written
+  //! \param[out] psi Array of at least n_modes(order(element)) values
+  //! \return Number of modes written
   int evaluate_basis(int element, Position r, double* psi) const;
 
   //! Reconstruct the expanded distribution of an element
   //
-  //! \param[in] element Element index (mesh bin)
+  //! \param[in] element Element index
   //! \param[in] r Position in global coordinates
   //! \param[in] values Tally values of the element's bins, i.e. the entries
   //!   [offset(element), offset(element + 1)) of the filter
-  //! \return Distribution per unit volume at r
+  //! \return Distribution per unit measure at r
   double reconstruct(int element, Position r, const double* values) const;
 
-private:
+protected:
+  //! Build elements_ from the (unstructured) mesh
+  virtual void build_elements(const UnstructuredMesh& mesh);
+
   //! Recompute bin offsets from the element orders
   void update_bins();
 
-  //! Evaluate the basis of an element at a position in the mesh frame
+  //! Evaluate the modes of an element at a position in the mesh frame
   int basis_in_mesh_frame(int element, Position r, double* psi) const;
 
   //----------------------------------------------------------------------------
   // Data members
 
-  vector<unique_ptr<fet::PhysicalToParametricMapping>>
-    maps_;              //!< Mapping of each element
-  vector<int> orders_;  //!< Expansion order of each element
+  vector<unique_ptr<fet::FETElement>> elements_; //!< Element of each index
+  vector<int> orders_;                           //!< Order of each element
   vector<int> offsets_; //!< First bin of each element (size n+1)
   int max_order_ {-1};  //!< Maximum order over all elements
 };

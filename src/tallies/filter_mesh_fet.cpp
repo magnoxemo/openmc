@@ -6,8 +6,9 @@
 #include <fmt/core.h>
 
 #include "openmc/error.h"
-#include "openmc/fet/dubiner.h"
+#include "openmc/hdf5_interface.h"
 #include "openmc/mesh.h"
+#include "openmc/tensor.h"
 #include "openmc/xml_interface.h"
 
 namespace openmc {
@@ -39,44 +40,45 @@ void MeshFETFilter::set_mesh(int32_t mesh)
       model::meshes[mesh_]->id_, id()));
   }
 
-  // Build the mapping of each element. Only linear tetrahedra are supported for
-  // now.
-  int n_elem = umesh->n_bins();
-  maps_.clear();
-  maps_.reserve(n_elem);
+  build_elements(*umesh);
+
+  // Keep existing orders if they still match the mesh
+  if (orders_.size() != elements_.size())
+    orders_.assign(elements_.size(), 0);
+  update_bins();
+}
+
+void MeshFETFilter::build_elements(const UnstructuredMesh& umesh)
+{
+  int n_elem = umesh.n_bins();
+  elements_.clear();
+  elements_.reserve(n_elem);
   for (int e = 0; e < n_elem; ++e) {
-    auto conn = umesh->connectivity(e);
+    auto conn = umesh.connectivity(e);
     if (conn.size() != 4) {
       fatal_error(fmt::format("Element {} of mesh {} has {} vertices; mesh FET "
                               "filters only support linear tetrahedra.",
-        e, umesh->id_, conn.size()));
+        e, umesh.id_, conn.size()));
     }
-    std::vector<Position> vertices;
-    vertices.reserve(4); // Maybe I need to get waya from that at some point.
+    vector<Position> vertices;
     for (int i = 0; i < 4; ++i)
-      vertices.push_back(umesh->vertex(conn[i]));
-    // TODO:
-    // I will come back and implement this for other elemental mapping as well.
-    maps_.push_back(make_unique<fet::TetElementMapping>(vertices));
-  }
+      vertices.push_back(umesh.vertex(conn[i]));
 
-  // Keep existing orders if they still match the mesh
-  if (orders_.size() != maps_.size())
-    orders_.assign(maps_.size(), 0);
-  update_bins();
+    elements_.push_back(make_unique<fet::TetElement>(vertices));
+  }
 }
 
 void MeshFETFilter::set_order(int order)
 {
-  set_orders(vector<int>(maps_.size(), order));
+  set_orders(vector<int>(elements_.size(), order));
 }
 
 void MeshFETFilter::set_orders(const vector<int>& orders)
 {
-  if (orders.size() != maps_.size()) {
+  if (orders.size() != elements_.size()) {
     fatal_error(fmt::format("Mesh FET filter {} received {} element orders "
                             "but its mesh has {} elements.",
-      id(), orders.size(), maps_.size()));
+      id(), orders.size(), elements_.size()));
   }
   for (int order : orders) {
     if (order > fet::MAX_ORDER) {
@@ -96,7 +98,7 @@ void MeshFETFilter::update_bins()
   max_order_ = -1;
   int64_t total = 0;
   for (std::size_t e = 0; e < orders_.size(); ++e) {
-    total += fet::n_modes_tet(orders_[e]);
+    total += elements_[e]->n_modes(orders_[e]);
     if (total > std::numeric_limits<int>::max()) {
       fatal_error(fmt::format(
         "Mesh FET filter {} has too many bins for a single tally.", id()));
@@ -120,7 +122,7 @@ void MeshFETFilter::get_all_bins(
   if (e < 0 || orders_[e] < 0)
     return;
 
-  double psi[fet::MAX_MODES_TET];
+  double psi[fet::MAX_MODES];
   int n = basis_in_mesh_frame(e, r, psi);
   int first = offsets_[e];
   for (int i = 0; i < n; ++i) {
@@ -144,10 +146,7 @@ int MeshFETFilter::basis_in_mesh_frame(
   int order = orders_[element];
   if (order < 0)
     return 0;
-  double lambda[4];
-  maps_[element]->parametric_coordinates(r, lambda);
-  fet::eval_tet(order, lambda, psi);
-  return fet::n_modes_tet(order);
+  return elements_[element]->eval(order, r, psi);
 }
 
 int MeshFETFilter::evaluate_basis(int element, Position r, double* psi) const
@@ -158,24 +157,50 @@ int MeshFETFilter::evaluate_basis(int element, Position r, double* psi) const
 double MeshFETFilter::reconstruct(
   int element, Position r, const double* values) const
 {
-  double psi[fet::MAX_MODES_TET];
+  double psi[fet::MAX_MODES];
   int n = evaluate_basis(element, r, psi);
-  // The tallied modes are unnormalized. With squared normalization N_i^2, the
-  // coefficient is a_i = N_i * tally_i / V and the mode is N_i * psi_i.
   double f = 0.0;
-  for (int i = 0; i < n; ++i) {
-    auto m = fet::tet_mode(i);
-    f += fet::tet_mode_norm_sq(m[0], m[1], m[2]) * values[i] * psi[i];
-  }
-  return f / maps_[element]->volume();
+  for (int i = 0; i < n; ++i)
+    f += elements_[element]->mode_norm_sq(orders_[element], i) * values[i] * psi[i];
+  return f / elements_[element]->measure();
 }
 
 void MeshFETFilter::to_statepoint(hid_t filter_group) const
 {
   MeshFilter::to_statepoint(filter_group);
-  write_dataset(filter_group, "basis", "legendre_jacobi");
+  write_dataset(filter_group, "basis", "legendre_jacobi_duffy");
   write_dataset(filter_group, "normalized", 0);
   write_dataset(filter_group, "orders", orders_);
+
+  // First filter bin of each element (size n_elements + 1). Excluded elements
+  // (negative order) own no bins.
+  write_dataset(filter_group, "offsets", offsets_);
+
+  if (elements_.empty())
+    return;
+  const fet::FETElement& shape = *elements_[0];
+
+  // Exact vertices of each element, in the mesh frame (before the filter
+  // translation/rotation is applied) and in cm. The last vertex is the one
+  // collapsed by the Duffy transform.
+  size_t n_elem = elements_.size();
+  size_t n_vert = shape.n_vertices();
+  tensor::Tensor<double> vertices({n_elem, n_vert, size_t(3)});
+  tensor::Tensor<double> measure({n_elem});
+  for (size_t e = 0; e < n_elem; ++e) {
+    for (size_t i = 0; i < n_vert; ++i) {
+      const Position& v = elements_[e]->vertex(i);
+      vertices(e, i, 0) = v.x;
+      vertices(e, i, 1) = v.y;
+      vertices(e, i, 2) = v.z;
+    }
+    measure(e) = elements_[e]->measure();
+  }
+  write_dataset(filter_group, "vertices_ordered", vertices);
+  write_dataset(filter_group, shape.measure_name(), measure);
+
+  write_attribute(filter_group, "fet_version", 1);
+  write_attribute(filter_group, "element_type", shape.type());
 }
 
 int MeshFETFilter::element_from_bin(int bin) const
@@ -187,7 +212,7 @@ int MeshFETFilter::element_from_bin(int bin) const
 std::string MeshFETFilter::text_label(int bin) const
 {
   int e = element_from_bin(bin);
-  auto mode = fet::tet_mode(bin - offsets_[e]);
+  auto mode = elements_[e]->mode(orders_[e], bin - offsets_[e]);
   return fmt::format("{}, FET mode ({}, {}, {})", MeshFilter::text_label(e),
     mode[0], mode[1], mode[2]);
 }

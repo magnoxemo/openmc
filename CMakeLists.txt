@@ -355,8 +355,7 @@ list(APPEND libopenmc_SOURCES
   src/initialize.cpp
   src/lattice.cpp
   src/material.cpp
-  src/fet/dubiner.cpp
-  src/fet/element_map.cpp
+  src/fet/fet_element.cpp
   src/math_functions.cpp
   src/mcpl_interface.cpp
   src/mesh.cpp
