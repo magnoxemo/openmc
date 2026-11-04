@@ -12,17 +12,31 @@ namespace fet {
 //! Maximum supported 1D degree of an expansion
 constexpr int MAX_ORDER {10};
 
+//! Maximum number of reference coordinates of any supported element type
+//! As right now I am planning to do spatial FET tally realted stuff
+constexpr int MAX_DIM {3};
+
 //! Maximum number of modes of any supported element type and order
 constexpr int MAX_MODES {(MAX_ORDER + 1) * (MAX_ORDER + 1) * (MAX_ORDER + 1)};
+
+//! Expansion order along each reference axis. Entries at and beyond the
+//! dimension of an element are ignored.
+using Orders = std::array<int, MAX_DIM>;
 
 //==============================================================================
 //! One element of a functional expansion tally, holding both its geometry and
 //! its expansion functions.
 //!
-//! A mode (i, j, k) is P_i(xi_0) P_j^(0,1)(xi_1) P_k^(0,2)(xi_2) in the
-//! Duffy-collapsed reference coordinates xi of the element, with i, j, k <=
-//! order. For an element of order p the modes are numbered lexicographically,
-//! index = (i * (p + 1) + j) * (p + 1) + k, so the numbering depends on p.
+//! An element has dim() reference coordinates xi, each in [-1, 1], and an
+//! expansion order p_d along each axis d. A mode (m_0, ..., m_{dim-1}) is the
+//! tensor product of P_{m_d}^(0, beta_d)(xi_d) with 0 <= m_d <= p_d, where
+//! beta_d is the Jacobi parameter of axis d. The subclass picks the betas so
+//! that they match the Jacobian of its map to the reference cube, which makes
+//! the modes orthogonal on the element. The modes are numbered
+//! lexicographically with the last axis fastest, e.g. in 3D
+//! index = (i * (p_1 + 1) + j) * (p_2 + 1) + k, so the numbering depends on
+//! the orders. The orders are 0 on every axis until set; a negative order on
+//! any axis leaves the element without modes.
 //==============================================================================
 
 class FETElement {
@@ -32,46 +46,75 @@ public:
   //! Number of vertices
   virtual int n_vertices() const = 0;
 
+  //! Vertex i, in the order that defines the reference coordinates
+  virtual const Position& vertex(int i) const = 0;
+
   //! Name of the element type, written to the statepoint
   virtual const char* type() const = 0;
 
-  //! Name of the measure, written to the statepoint
-  virtual const char* measure_name() const = 0;
-
-  //! Reference coordinates xi[0..3) of a position. Not clamped.
+  //! Reference coordinates xi[0..dim()) of a position. Not clamped.
   virtual void reference_coords(Position r, double* xi) const = 0;
 
-  //! Vertex i, in the order that defines the reference coordinates
-  const Position& vertex(int i) const { return v_[i]; }
+  //! Number of reference coordinates
+  int dim() const { return dim_; }
 
-  //! Unsigned measure (volume)
-  double measure() const { return measure_; }
+  //! Jacobi parameter beta of reference axis d
+  int beta(int d) const { return beta_[d]; }
 
-  //! Number of modes of the given order; 0 for a negative order
-  int n_modes(int order) const;
+  //! Unsigned volume in dim() dimensions, i.e. area for a 2D element
+  double volume() const { return volume_; }
 
-  //! Indices (i, j, k) of a mode of an element of the given order
-  std::array<int, 3> mode(int order, int index) const;
+  //! Set the expansion order along one reference axis
+  //
+  //! \param[in] axis Reference axis, 0 <= axis < dim()
+  //! \param[in] order Order along the axis, at most MAX_ORDER; negative
+  //!   leaves the element without modes
+  void set_order(int axis, int order);
 
-  //! Squared normalization N^2 = (2i + 1)(j + 1)(2k + 3) / 3 of a mode.
-  //! Multiplying a mode by N gives the basis with integral psi_i psi_j =
-  //! measure * delta_ij.
-  double mode_norm_sq(int order, int index) const;
+  //! Set the expansion order along every reference axis; entries at and
+  //! beyond dim() are ignored
+  void set_orders(const Orders& orders);
 
-  //! Evaluate all unnormalized modes of the given order at a position
+  //! Expansion order along reference axis d
+  int order(int d) const { return orders_[d]; }
+
+  //! Expansion orders along all reference axes
+  const Orders& orders() const { return orders_; }
+
+  //! Largest order over the reference axes
+  int max_order() const;
+
+  //! Number of modes, prod_d (p_d + 1); 0 if any order is negative
+  int n_modes() const;
+
+  //! Per-axis degrees of a mode. Entries at and beyond dim() are 0.
+  Orders mode(int index) const;
+
+  //! Squared normalization N^2 = prod_d (2 m_d + beta_d + 1) / (beta_d + 1)
+  //! of a mode. Multiplying a mode by N gives the basis with integral
+  //! psi_i psi_j = volume * delta_ij.
+  double mode_norm_sq(int index) const;
+
+  //! Evaluate all unnormalized modes at a position
   //
   //! The reference coordinates are clamped to [-1, 1], which keeps points that
   //! lie marginally outside the element (roundoff) finite.
   //
-  //! \param[in] order Maximum 1D degree, 0 <= order <= MAX_ORDER
   //! \param[in] r Position in the frame of the vertices
-  //! \param[out] psi Array of at least n_modes(order) values
+  //! \param[out] psi Array of at least n_modes() values
   //! \return Number of modes written
-  int eval(int order, Position r, double* psi) const;
+  int eval(Position r, double* psi) const;
 
 protected:
-  std::array<Position, 4> v_;
-  double measure_ {0.0};
+  FETElement(int dim, std::array<int, MAX_DIM> beta) : dim_ {dim}, beta_ {beta}
+  {}
+
+  double volume_ {0.0};
+
+private:
+  int dim_;
+  std::array<int, MAX_DIM> beta_;
+  Orders orders_ {}; //!< Expansion order along each reference axis
 };
 
 //==============================================================================
@@ -82,7 +125,7 @@ protected:
 //! through the Duffy collapse, D first:
 //!   xi_0 = (lb - la) / s2,   xi_1 = (2 s2 - s3) / s3,   xi_2 = 1 - 2 ld
 //! with s2 = la + lb and s3 = la + lb + lc. A coordinate whose denominator
-//! vanishes is set to 0.
+//! vanishes is set to 0. The Jacobi parameters are beta = (0, 1, 2).
 //==============================================================================
 
 class TetElement final : public FETElement {
@@ -90,12 +133,41 @@ public:
   explicit TetElement(const vector<Position>& vertices);
 
   int n_vertices() const override { return 4; }
+  const Position& vertex(int i) const override { return v_[i]; }
   const char* type() const override { return "tet4"; }
-  const char* measure_name() const override { return "volume"; }
   void reference_coords(Position r, double* xi) const override;
 
 private:
+  std::array<Position, 4> v_;
   std::array<double, 9> inv_ {}; //!< Row-major inverse of [A-D, B-D, C-D]
+};
+
+//==============================================================================
+//! Linear triangle embedded in 3D, for surface tallies.
+//!
+//! A position is projected orthogonally onto the plane of the triangle, and
+//! the barycentric coordinates (la, lb, lc) of the projection with respect to
+//! the vertices (A, B, C) give the reference coordinates through the Duffy
+//! collapse, C first:
+//!   xi_0 = (lb - la) / s2,   xi_1 = 1 - 2 lc
+//! with s2 = la + lb. xi_0 is set to 0 when s2 vanishes. The Jacobi
+//! parameters are beta = (0, 1).
+//==============================================================================
+
+class TriElement final : public FETElement {
+public:
+  explicit TriElement(const vector<Position>& vertices);
+
+  int n_vertices() const override { return 3; }
+  const Position& vertex(int i) const override { return v_[i]; }
+  const char* type() const override { return "tri3"; }
+  void reference_coords(Position r, double* xi) const override;
+
+private:
+  std::array<Position, 3> v_;
+  Position e0_;                   //!< A - C
+  Position e1_;                   //!< B - C
+  std::array<double, 4> ginv_ {}; //!< Row-major inverse of the Gram matrix
 };
 
 } // namespace fet

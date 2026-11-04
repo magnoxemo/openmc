@@ -40,11 +40,17 @@ void MeshFETFilter::set_mesh(int32_t mesh)
       model::meshes[mesh_]->id_, id()));
   }
 
+  // Keep existing orders if they still match the mesh
+  vector<fet::Orders> orders;
+  for (const auto& elem : elements_)
+    orders.push_back(elem->orders());
+
   build_elements(*umesh);
 
-  // Keep existing orders if they still match the mesh
-  if (orders_.size() != elements_.size())
-    orders_.assign(elements_.size(), 0);
+  if (orders.size() == elements_.size()) {
+    for (std::size_t e = 0; e < elements_.size(); ++e)
+      elements_[e]->set_orders(orders[e]);
+  }
   update_bins();
 }
 
@@ -87,24 +93,25 @@ void MeshFETFilter::set_orders(const vector<int>& orders)
         id(), order, fet::MAX_ORDER));
     }
   }
-  orders_ = orders;
+  for (std::size_t e = 0; e < elements_.size(); ++e)
+    elements_[e]->set_orders({orders[e], orders[e], orders[e]});
   update_bins();
 }
 
 void MeshFETFilter::update_bins()
 {
-  offsets_.resize(orders_.size() + 1);
+  offsets_.resize(elements_.size() + 1);
   offsets_[0] = 0;
   max_order_ = -1;
   int64_t total = 0;
-  for (std::size_t e = 0; e < orders_.size(); ++e) {
-    total += elements_[e]->n_modes(orders_[e]);
+  for (std::size_t e = 0; e < elements_.size(); ++e) {
+    total += elements_[e]->n_modes();
     if (total > std::numeric_limits<int>::max()) {
       fatal_error(fmt::format(
         "Mesh FET filter {} has too many bins for a single tally.", id()));
     }
     offsets_[e + 1] = static_cast<int>(total);
-    max_order_ = std::max(max_order_, orders_[e]);
+    max_order_ = std::max(max_order_, elements_[e]->max_order());
   }
   n_bins_ = offsets_.back();
 }
@@ -119,7 +126,7 @@ void MeshFETFilter::get_all_bins(
 
   Position r = mesh_position(p.r());
   int e = model::meshes[mesh_]->get_bin(r);
-  if (e < 0 || orders_[e] < 0)
+  if (e < 0)
     return;
 
   double psi[fet::MAX_MODES];
@@ -143,10 +150,7 @@ Position MeshFETFilter::mesh_position(Position r) const
 int MeshFETFilter::basis_in_mesh_frame(
   int element, Position r, double* psi) const
 {
-  int order = orders_[element];
-  if (order < 0)
-    return 0;
-  return elements_[element]->eval(order, r, psi);
+  return elements_[element]->eval(r, psi);
 }
 
 int MeshFETFilter::evaluate_basis(int element, Position r, double* psi) const
@@ -161,8 +165,8 @@ double MeshFETFilter::reconstruct(
   int n = evaluate_basis(element, r, psi);
   double f = 0.0;
   for (int i = 0; i < n; ++i)
-    f += elements_[element]->mode_norm_sq(orders_[element], i) * values[i] * psi[i];
-  return f / elements_[element]->measure();
+    f += elements_[element]->mode_norm_sq(i) * values[i] * psi[i];
+  return f / elements_[element]->volume();
 }
 
 void MeshFETFilter::to_statepoint(hid_t filter_group) const
@@ -170,7 +174,6 @@ void MeshFETFilter::to_statepoint(hid_t filter_group) const
   MeshFilter::to_statepoint(filter_group);
   write_dataset(filter_group, "basis", "legendre_jacobi_duffy");
   write_dataset(filter_group, "normalized", 0);
-  write_dataset(filter_group, "orders", orders_);
 
   // First filter bin of each element (size n_elements + 1). Excluded elements
   // (negative order) own no bins.
@@ -186,20 +189,25 @@ void MeshFETFilter::to_statepoint(hid_t filter_group) const
   size_t n_elem = elements_.size();
   size_t n_vert = shape.n_vertices();
   tensor::Tensor<double> vertices({n_elem, n_vert, size_t(3)});
-  tensor::Tensor<double> measure({n_elem});
+  size_t dim = shape.dim();
+  tensor::Tensor<double> volume({n_elem});
+  tensor::Tensor<int> orders({n_elem, dim});
   for (size_t e = 0; e < n_elem; ++e) {
+    for (size_t d = 0; d < dim; ++d)
+      orders(e, d) = elements_[e]->order(d);
     for (size_t i = 0; i < n_vert; ++i) {
       const Position& v = elements_[e]->vertex(i);
       vertices(e, i, 0) = v.x;
       vertices(e, i, 1) = v.y;
       vertices(e, i, 2) = v.z;
     }
-    measure(e) = elements_[e]->measure();
+    volume(e) = elements_[e]->volume();
   }
   write_dataset(filter_group, "vertices_ordered", vertices);
-  write_dataset(filter_group, shape.measure_name(), measure);
+  write_dataset(filter_group, "volume", volume);
+  write_dataset(filter_group, "orders", orders);
 
-  write_attribute(filter_group, "fet_version", 1);
+  write_attribute(filter_group, "fet_version", 2);
   write_attribute(filter_group, "element_type", shape.type());
 }
 
@@ -212,7 +220,12 @@ int MeshFETFilter::element_from_bin(int bin) const
 std::string MeshFETFilter::text_label(int bin) const
 {
   int e = element_from_bin(bin);
-  auto mode = elements_[e]->mode(orders_[e], bin - offsets_[e]);
+  const auto& elem = *elements_[e];
+  auto mode = elem.mode(bin - offsets_[e]);
+  if (elem.dim() == 2) {
+    return fmt::format(
+      "{}, FET mode ({}, {})", MeshFilter::text_label(e), mode[0], mode[1]);
+  }
   return fmt::format("{}, FET mode ({}, {}, {})", MeshFilter::text_label(e),
     mode[0], mode[1], mode[2]);
 }
