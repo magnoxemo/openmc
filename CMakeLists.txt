@@ -356,6 +356,7 @@ list(APPEND libopenmc_SOURCES
   src/lattice.cpp
   src/material.cpp
   src/fet/fet_element.cpp
+  src/fet/element_grid.cpp
   src/math_functions.cpp
   src/mcpl_interface.cpp
   src/mesh.cpp
@@ -422,6 +423,7 @@ list(APPEND libopenmc_SOURCES
   src/tallies/filter_materialfrom.cpp
   src/tallies/filter_mesh.cpp
   src/tallies/filter_mesh_fet.cpp
+  src/tallies/filter_mesh_surface_fet.cpp
   src/tallies/filter_meshborn.cpp
   src/tallies/filter_meshmaterial.cpp
   src/tallies/filter_meshsurface.cpp

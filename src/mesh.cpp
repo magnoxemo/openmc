@@ -1090,6 +1090,14 @@ void UnstructuredMesh::surface_bins_crossed(
   fatal_error("Unstructured mesh surface tallies are not implemented.");
 }
 
+vector<UnstructuredMesh::SidesetFace> UnstructuredMesh::sideset_faces(
+  int sideset_id) const
+{
+  fatal_error(fmt::format("Sideset faces are not available for the {} "
+                          "unstructured mesh interface of mesh {}.",
+    interface_, id_));
+}
+
 std::string UnstructuredMesh::bin_label(int bin) const
 {
   return fmt::format("Mesh Index ({})", bin);
@@ -3964,11 +3972,82 @@ Position LibMesh::vertex(int vertex_id) const
 std::vector<int> LibMesh::connectivity(int elem_id) const
 {
   std::vector<int> conn;
-  const auto* elem_ptr = m_->elem_ptr(elem_id);
+  const auto* elem_ptr = this->get_element_from_bin(bin);;
   for (int i = 0; i < elem_ptr->n_nodes(); i++) {
     conn.push_back(elem_ptr->node_id(i));
   }
   return conn;
+}
+
+
+vector<UnstructuredMesh::SidesetFace> LibMesh::sideset_faces(int sideset_id) const
+{
+  // Collect the active (element, side) pairs of the sideset
+  std::vector<std::pair<const libMesh::Elem*, int>> sides;
+  for (const auto& entry : m_->get_boundary_info().get_sideset_map()) {
+    const libMesh::Elem* elem = entry.first;
+    if (entry.second.second != sideset_id || !elem->active())
+      continue;
+    sides.emplace_back(elem, static_cast<int>(entry.second.first));
+  }
+  if (sides.empty()) {
+    fatal_error(
+      fmt::format("Sideset {} has no faces on mesh {}.", sideset_id, id_));
+  }
+
+  // Deterministic order, independent of the map's ordering
+  std::sort(sides.begin(), sides.end(), [](const auto& a, const auto& b) {
+    return a.first->id() != b.first->id() ? a.first->id() < b.first->id()
+                                          : a.second < b.second;
+  });
+
+  auto node_position = [&](const libMesh::Elem& elem, unsigned int local) {
+    const auto& node = elem.node_ref(local);
+    Position r(node(0), node(1), node(2));
+    return length_multiplier_ > 0.0 ? length_multiplier_ * r : r;
+  };
+
+  vector<SidesetFace> faces;
+  std::set<std::vector<libMesh::dof_id_type>> seen;
+  for (const auto& [elem, side] : sides) {
+    auto side_elem = elem->build_side_ptr(side);
+    const unsigned int n_corners = side_elem->n_vertices();
+
+    // A face listed from both of its elements is kept once, for the element
+    // that comes first
+    std::vector<libMesh::dof_id_type> key;
+    for (unsigned int i = 0; i < n_corners; ++i)
+      key.push_back(side_elem->node_id(i));
+    std::sort(key.begin(), key.end());
+    if (!seen.insert(key).second)
+      continue;
+
+    SidesetFace face;
+    Position face_centroid {0.0, 0.0, 0.0};
+    for (unsigned int i = 0; i < n_corners; ++i) {
+      face.vertices.push_back(node_position(*side_elem, i));
+      face_centroid += face.vertices.back();
+    }
+    face_centroid /= static_cast<double>(n_corners);
+
+    Position elem_centroid {0.0, 0.0, 0.0};
+    for (unsigned int i = 0; i < elem->n_vertices(); ++i)
+      elem_centroid += node_position(*elem, i);
+    elem_centroid /= static_cast<double>(elem->n_vertices());
+
+
+    Position normal {0.0, 0.0, 0.0};
+    for (unsigned int i = 0; i < n_corners; ++i) {
+      normal += face.vertices[i].cross(face.vertices[(i + 1) % n_corners]);
+    }
+    if (normal.dot(face_centroid - elem_centroid) < 0.0)
+      std::reverse(face.vertices.begin() + 1, face.vertices.end());
+
+    face.element = get_bin_from_element(elem);
+    face.side = side;
+    faces.push_back(std::move(face));
+  }
+  return faces;
 }
 
 std::string LibMesh::library() const

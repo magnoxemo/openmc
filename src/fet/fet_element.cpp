@@ -50,6 +50,21 @@ int FETElement::n_modes() const
   return n;
 }
 
+BoundingBox FETElement::bounding_box() const
+{
+  BoundingBox box = BoundingBox::inverted();
+  for (int i = 0; i < n_vertices(); ++i)
+    box.expand(vertex(i));
+  return box;
+}
+
+bool FETElement::intersect(Position p0, Position d, SegmentHit& hit) const
+{
+  fatal_error(fmt::format("Segments cannot cross a {} FET element; only 2D "
+                          "(surface) elements support crossings.",
+    type()));
+}
+
 Orders FETElement::mode(int index) const
 {
   Orders m {};
@@ -163,6 +178,7 @@ TriElement::TriElement(const vector<Position>& vertices)
                 "functional expansion tally element.");
   }
   volume_ = area2 / 2.0;
+  normal_ = e0_.cross(e1_) / area2;
 
   // Gram matrix G = [e0.e0, e0.e1; e0.e1, e1.e1]; det G = |e0 x e1|^2
   const double g00 = e0_.dot(e0_);
@@ -187,6 +203,52 @@ void TriElement::reference_coords(Position r, double* xi) const
   const double s2 = la + lb;
   xi[0] = s2 > tiny ? (lb - la) / s2 : 0.0;
   xi[1] = 1.0 - 2.0 * lc;
+}
+
+bool TriElement::intersect(Position p0, Position d, SegmentHit& hit) const
+{
+  // Moller-Trumbore on the triangle C + u e0 + v e1 (u, v the barycentric
+  // coordinates of A and B)
+  constexpr double bary_tol = 1.0e-10;
+  const double d_norm = d.norm();
+  const Position pv = d.cross(e1_);
+  const double det = e0_.dot(pv);
+  if (d_norm == 0.0 || std::abs(det) <= 1.0e-12 * d_norm * 2.0 * volume_)
+    return false;
+  const double inv = 1.0 / det;
+
+  const Position tv = p0 - v_[2];
+  const double u = tv.dot(pv) * inv;
+  if (u < -bary_tol || u > 1.0 + bary_tol)
+    return false;
+  const Position qv = tv.cross(e0_);
+  const double v = d.dot(qv) * inv;
+  if (v < -bary_tol || u + v > 1.0 + bary_tol)
+    return false;
+  const double t = e1_.dot(qv) * inv;
+  if (t <= 0.0 || t > 1.0)
+    return false;
+
+  hit.t = t;
+  hit.point = p0 + t * d;
+  hit.cosine = d.dot(normal_) / d_norm;
+  return true;
+}
+
+//==============================================================================
+// Factories
+//==============================================================================
+
+unique_ptr<FETElement> make_face_element(const vector<Position>& vertices)
+{
+  switch (vertices.size()) {
+  case 3:
+    return make_unique<TriElement>(vertices);
+  default:
+    fatal_error(fmt::format("There is no FET element for a face with {} "
+                            "vertices.",
+      vertices.size()));
+  }
 }
 
 } // namespace fet

@@ -4,6 +4,7 @@
 #ifndef OPENMC_MESH_H
 #define OPENMC_MESH_H
 
+#include <array>
 #include <set>
 #include <unordered_map>
 
@@ -801,6 +802,25 @@ public:
   //! \return element connectivity as IDs of the vertices
   virtual std::vector<int> connectivity(int id) const = 0;
 
+  //! A face on a sideset
+  struct SidesetFace {
+    vector<Position> vertices; //!< Corner vertices in cm, ordered so that the
+                               //!< right-hand rule gives the normal pointing
+                               //!< out of the element that owns the face
+    int element;               //!< Mesh bin of the owning element
+    int side;                  //!< Local side index in that element
+  };
+
+  //! Get the faces of a sideset
+  //
+  //! Faces are unique and ordered by (owning element, side). A face has as
+  //! many vertices as the corners of the side of its element (3 for a
+  //! tetrahedron, 4 for a hexahedron).
+  //
+  //! \param[in] sideset_id Boundary ID of the sideset in the mesh file
+  //! \return Faces of the sideset
+  virtual vector<SidesetFace> sideset_faces(int sideset_id) const;
+
   //! Get the library used for this unstructured mesh
   virtual std::string library() const = 0;
 
@@ -1098,6 +1118,8 @@ public:
   Position vertex(int id) const override;
 
   std::vector<int> connectivity(int id) const override;
+
+  vector<SidesetFace> sideset_faces(int sideset_id) const override;
 
   //! Get the volume of a mesh bin
   //

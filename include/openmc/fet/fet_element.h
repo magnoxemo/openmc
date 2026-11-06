@@ -3,6 +3,8 @@
 
 #include <array>
 
+#include "openmc/bounding_box.h"
+#include "openmc/memory.h"
 #include "openmc/position.h"
 #include "openmc/vector.h"
 
@@ -22,6 +24,13 @@ constexpr int MAX_MODES {(MAX_ORDER + 1) * (MAX_ORDER + 1) * (MAX_ORDER + 1)};
 //! Expansion order along each reference axis. Entries at and beyond the
 //! dimension of an element are ignored.
 using Orders = std::array<int, MAX_DIM>;
+
+//! Crossing of a line segment with a 2D element
+struct SegmentHit {
+  double t {0.0};       //!< Segment parameter of the crossing, in (0, 1]
+  Position point;       //!< Crossing point
+  double cosine {0.0};  //!< Cosine between the segment and the element normal
+};
 
 //==============================================================================
 //! One element of a functional expansion tally, holding both its geometry and
@@ -54,6 +63,24 @@ public:
 
   //! Reference coordinates xi[0..dim()) of a position. Not clamped.
   virtual void reference_coords(Position r, double* xi) const = 0;
+
+  //! Axis-aligned bounding box of the vertices
+  BoundingBox bounding_box() const;
+
+  //! Crossing of a line segment with the element
+  //
+  //! Only 2D elements embedded in 3D (surface elements) can be crossed. The
+  //! normal of such an element follows the right-hand rule on its vertex
+  //! order. The segment is p0 + t d with t in (0, 1]: a crossing at t = 0 does
+  //! not count and one at t = 1 does, so that consecutive segments of a
+  //! trajectory never count the same crossing twice. Segments parallel to the
+  //! element do not cross it.
+  //
+  //! \param[in] p0 Start of the segment
+  //! \param[in] d Displacement from the start to the end of the segment
+  //! \param[out] hit Crossing, if there is one
+  //! \return Whether the segment crosses the element
+  virtual bool intersect(Position p0, Position d, SegmentHit& hit) const;
 
   //! Number of reference coordinates
   int dim() const { return dim_; }
@@ -162,13 +189,20 @@ public:
   const Position& vertex(int i) const override { return v_[i]; }
   const char* type() const override { return "tri3"; }
   void reference_coords(Position r, double* xi) const override;
+  bool intersect(Position p0, Position d, SegmentHit& hit) const override;
 
 private:
   std::array<Position, 3> v_;
+  Position normal_;               //!< Unit normal (B - A) x (C - A)
   Position e0_;                   //!< A - C
   Position e1_;                   //!< B - C
   std::array<double, 4> ginv_ {}; //!< Row-major inverse of the Gram matrix
 };
+
+//! Create the 2D element of a face of a mesh from its vertices, ordered so that
+//! the right-hand rule gives the face normal. Throws (fatal_error) when no
+//! element type exists for the number of vertices.
+std::unique_ptr<FETElement> make_face_element(const vector<Position>& vertices);
 
 } // namespace fet
 } // namespace openmc

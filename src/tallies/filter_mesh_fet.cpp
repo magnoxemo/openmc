@@ -206,7 +206,6 @@ void MeshFETFilter::to_statepoint(hid_t filter_group) const
   write_dataset(filter_group, "vertices_ordered", vertices);
   write_dataset(filter_group, "volume", volume);
   write_dataset(filter_group, "orders", orders);
-
   write_attribute(filter_group, "fet_version", 2);
   write_attribute(filter_group, "element_type", shape.type());
 }
