@@ -3969,16 +3969,16 @@ Position LibMesh::vertex(int vertex_id) const
   }
 }
 
-std::vector<int> LibMesh::connectivity(int elem_id) const
+std::vector<int> LibMesh::connectivity(int bin) const
 {
+  const auto& elem = this->get_element_from_bin(bin);
   std::vector<int> conn;
-  const auto* elem_ptr = this->get_element_from_bin(bin);;
-  for (int i = 0; i < elem_ptr->n_nodes(); i++) {
-    conn.push_back(elem_ptr->node_id(i));
+  conn.reserve(elem.n_nodes());
+  for (unsigned int i = 0; i < elem.n_nodes(); i++) {
+    conn.push_back(elem.node_id(i));
   }
   return conn;
 }
-
 
 vector<UnstructuredMesh::SidesetFace> LibMesh::sideset_faces(int sideset_id) const
 {
