@@ -553,8 +553,7 @@ void Tally::set_scores(const vector<std::string>& scores)
       material_present = true;
     } else if (filt->type() == FilterType::SURFACE) {
       surface_present = true;
-    } else if (filt->type() == FilterType::MESH_SURFACE ||
-               filt->type() == FilterType::MESH_SURFACE_FET) {
+    } else if (filt->type() == FilterType::MESH_SURFACE) {
       meshsurface_present = true;
     }
   }
