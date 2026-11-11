@@ -38,6 +38,7 @@
 #include "openmc/tallies/filter_sph_harm.h"
 #include "openmc/tallies/filter_sptl_legendre.h"
 #include "openmc/tallies/filter_surface.h"
+#include "openmc/tallies/filter_surface_fet.h"
 #include "openmc/tallies/filter_time.h"
 #include "openmc/tallies/filter_universe.h"
 #include "openmc/tallies/filter_weight.h"
@@ -159,6 +160,8 @@ Filter* Filter::create(const std::string& type, int32_t id)
     return Filter::create<ReactionFilter>(id);
   } else if (type == "surface") {
     return Filter::create<SurfaceFilter>(id);
+  } else if (type == "surfacefet") {
+    return Filter::create<SurfaceFETFilter>(id);
   } else if (type == "spatiallegendre") {
     return Filter::create<SpatialLegendreFilter>(id);
   } else if (type == "sphericalharmonics") {

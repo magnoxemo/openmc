@@ -1,28 +1,47 @@
-#ifndef OPENMC_FILTER_SURFACE_FET_H
-#define OPENMC_FILTER_SURFACE_FET_H
+#ifndef OPENMC_TALLIES_FILTER_SURFACE_FET_H
+#define OPENMC_TALLIES_FILTER_SURFACE_FET_H
 
-#include <memory>
-#include <vector>
+#include <cstdint>
+#include <unordered_map>
 
-#include "filter.h"
 #include "openmc/fet/fet_element.h"
-#include "openmc/tallies/filter_surface.hpp"
+#include "openmc/memory.h"
+#include "openmc/span.h"
+#include "openmc/tallies/filter.h"
+#include "openmc/vector.h"
 
 namespace openmc {
 
-// maybe inheriting from the mesh_fet_filter will make things easier but
-// not now. I am mainly intending this to be a dagmc surface filter
+//==============================================================================
+//! Facet-wise functional expansion tally (FET) on XDG surface meshes.
+//!
+//! Every facet of every filtered surface is a fet::FETElement (linear
+//! triangles for now) with its own expansion order along each reference axis.
+//! The filter has one bin per (facet, mode) pair, stored facet-major: the bins
+//! of facet e are [offset(e), offset(e+1)), in the mode order of the element.
+//! Facets are numbered surface after surface, in the order of the surfaces of
+//! the filter; the facets of a surface are in the order of the XDG mesh
+//! manager. The weight of a bin is the value of the unnormalized mode at the
+//! crossing point, as for MeshFETFilter, so with the squared mode norm N_i^2
+//! the reconstructed distribution on facet e is
+//!
+//!   f(r) = sum_i N_i^2 * (tally in bin offset(e) + i) * psi_i(r) / area_e
+//!
+//! The filter only locates the facet and weights the bins. The scoring of
+//! surface tallies (net current or surface-crossing flux, including the sign of
+//! the crossing) is done by the surface tally machinery.
+//!
+//! The facets are built when the surfaces are set, which resets all orders to
+//! the order given by set_order() (0 until set). After changing the orders of
+//! facets directly through element(), call update_bins().
+//==============================================================================
 
-class DAGSurface;
-
-class SurfaceFETFilter : public SurfaceFETFilter {
+class SurfaceFETFilter : public Filter {
 public:
-  ~SurfaceFETFilter() = default;
-
   //----------------------------------------------------------------------------
   // Methods
 
-  std::string type_str() const override { return "surface_fet"; }
+  std::string type_str() const override { return "surfacefet"; }
   FilterType type() const override { return FilterType::SURFACE_FET; }
 
   void from_xml(pugi::xml_node node) override;
@@ -37,72 +56,66 @@ public:
   //----------------------------------------------------------------------------
   // Accessors
 
+  //! Set the surfaces of the filter and build the facets of each of them
+  //
+  //! \param[in] surfaces Indices into model::surfaces; each must be an XDG
+  //!   surface mesh surface
   void set_surfaces(span<int32_t> surfaces);
 
-  //! Set the same expansion order on every axis of every element
-  void set_order(unsigned int order);
+  //! Set the same expansion order on every axis of every facet; negative
+  //! excludes the facets. Also the order of facets built later.
+  void set_order(int order);
 
-  //! Set the expansion order of each element, the same on all of its axes;
-  //! negative excludes an element
-  void set_orders(const vector<unsigned int>& orders);
-
-  //! Recompute the bin offsets from the element orders. Call after changing
-  //! the orders of elements through element().
+  //! Recompute the bin offsets from the facet orders. Call after changing the
+  //! orders of facets through element().
   void update_bins();
 
-  //! First filter bin belonging to an element
-  int offset(int surface_element_index) const
-  {
-    return offsets_[surface_element_index];
-  }
+  //! First filter bin belonging to a facet
+  int offset(int facet) const { return offsets_[facet]; }
 
-  //! Largest order over all elements and axes
+  //! Largest order over all facets and axes
   int max_order() const { return max_order_; }
 
-  //! Number of elements covered by the filter
+  //! Number of facets covered by the filter
   int n_elements() const { return static_cast<int>(elements_.size()); }
 
-  const fet::FETElement& element(int surface_element_index) const
-  {
-    return *elements_[surface_element_index];
-  }
+  const fet::FETElement& element(int facet) const { return *elements_[facet]; }
 
-  //! Element, e.g. to change its orders; call update_bins()
-  fet::FETElement& element(int surface_element_index)
-  {
-    return *elements_[surface_element_index];
-  }
+  //! Facet element, e.g. to change its orders; call update_bins() afterwards
+  fet::FETElement& element(int facet) { return *elements_[facet]; }
 
-  //! Element containing a filter bin
+  //! Facet containing a filter bin
   int element_from_bin(int bin) const;
 
-  //! Evaluate the modes of an element
-  //
-  //! \param[in] element Element index
-  //! \param[in] r Position in global coordinates
-  //! \param[out] psi Array of at least element(element).n_modes() values
-  //! \return Number of modes written
-  int evaluate_basis(int surface_element_index, Position r, double* psi) const;
-
-  //! Reconstruct the expanded distribution of an element
-  //! \param[in] surface_element_index Element index
-  //! \param[in] r Position in global coordinates
-  //! \param[in] values Tally values of the element's bins, i.e. the entries
-  //!   [offset(element), offset(element + 1)) of the filter
-  //! \return Distribution per unit volume (area for 2D elements) at r
-  double reconstruct(int element, Position r, const double* values) const;
+  //! Index into the surfaces of the filter of the surface owning a facet
+  int surface_slot_from_element(int facet) const;
 
 private:
-  // builds surface elements by querying the dagmc surface
-  // this one will live in the set_surfaces
-  virtual void build_surface_elements(const DAGSurface& dg_surface);
+  //! Append the facets of one surface to elements_
+  void build_facets(int32_t surface_index);
 
-  std::vector<std::unique_ptr<openmc::fet::TriElement>> elements_;
-  std::vector<std::unique_ptr<fet::FETElement>>
-    elements_;               //!< Element of each index
-  std::vector<int> offsets_; //!< First bin of each element (size n+1)
-  int max_order_ {-1};       //!< Maximum order over all elements and axes
-}
+
+  //----------------------------------------------------------------------------
+  // Data members
+
+  //! Indices of the filtered surfaces in model::surfaces
+  vector<int32_t> surfaces_;
+
+  //! Map from a surface index to its position in surfaces_
+  std::unordered_map<int32_t, int> slot_map_;
+
+  //! Map from the XDG ID of a facet to its index in elements_
+  std::unordered_map<int32_t, int> facet_map_;
+
+  //! First facet of each surface of surfaces_ (size n_surfaces + 1)
+  vector<int> surface_first_;
+
+  vector<unique_ptr<fet::FETElement>> elements_; //!< Facet of each index
+  vector<int> offsets_; //!< First bin of each facet (size n+1)
+  int max_order_ {-1};  //!< Maximum order over all facets and axes
+  int order_ {0};       //!< Order given to newly built facets
+};
+
 } // namespace openmc
 
-#endif // OPENMC_FILTER_SURFACE_FET_H
+#endif // OPENMC_TALLIES_FILTER_SURFACE_FET_H

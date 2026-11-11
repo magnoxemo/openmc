@@ -422,6 +422,7 @@ public:
 #ifdef OPENMC_XDG_ENABLED
   // Previously intersected XDG faces
   std::vector<xdg::MeshID>& xdg_prev_elements() { return xdg_prev_elements_; }
+  const std::vector<xdg::MeshID>& xdg_prev_elements() const{ return xdg_prev_elements_;}
 #endif
 
 #if defined(OPENMC_DAGMC_ENABLED) || defined(OPENMC_XDG_ENABLED)
