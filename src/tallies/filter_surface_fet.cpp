@@ -26,8 +26,8 @@ void SurfaceFETFilter::from_xml(pugi::xml_node node)
   for (auto& s : surfaces) {
     auto search = model::surface_map.find(s);
     if (search == model::surface_map.end()) {
-      fatal_error(fmt::format(
-        "Could not find surface {} specified on tally filter.", s));
+      fatal_error(
+        fmt::format("Could not find surface {} specified on tally filter.", s));
     }
     s = search->second;
   }
@@ -38,31 +38,35 @@ void SurfaceFETFilter::from_xml(pugi::xml_node node)
   }
 
   // The order must be known before the facets are built
+  // This is probably not the best of idea and I will have to change that
+  // once I start to work on p refinement
   order_ = std::stoi(get_node_value(node, "order"));
+
   this->set_surfaces(surfaces);
 }
 
 void SurfaceFETFilter::set_surfaces(span<int32_t> surfaces)
 {
   surfaces_.clear();
-  slot_map_.clear();
+  surface_slot_mapping_.clear();
   surface_first_.clear();
-  facet_map_.clear();
+  xdg_face_to_fet_element_mapping_.clear();
   elements_.clear();
 
   surfaces_.reserve(surfaces.size());
+
   for (const auto index : surfaces) {
     if (index < 0 || index >= static_cast<int32_t>(model::surfaces.size())) {
       fatal_error(fmt::format(
         "Surface index {} on surface FET filter {} is out of range.", index,
         id()));
     }
-    if (slot_map_.count(index)) {
+    if (surface_slot_mapping_.count(index)) {
       fatal_error(fmt::format("Surface {} appears more than once on surface "
                               "FET filter {}.",
         model::surfaces[index]->id_, id()));
     }
-    slot_map_[index] = static_cast<int>(surfaces_.size());
+    surface_slot_mapping_[index] = static_cast<int>(surfaces_.size());
     surfaces_.push_back(index);
 
     surface_first_.push_back(static_cast<int>(elements_.size()));
@@ -102,7 +106,7 @@ void SurfaceFETFilter::build_facets(int32_t surface_index)
     for (const auto& v : coords)
       vertices.emplace_back(v.x, v.y, v.z);
 
-    facet_map_[face] = static_cast<int>(elements_.size());
+    xdg_face_to_fet_element_mapping_[face] = static_cast<int>(elements_.size());
     auto element = fet::make_face_element(vertices);
     for (int axis = 0; axis < element->dim(); ++axis)
       element->set_order(axis, order_);
@@ -145,8 +149,8 @@ void SurfaceFETFilter::update_bins()
 void SurfaceFETFilter::get_all_bins(
   const Particle& p, TallyEstimator estimator, FilterMatch& match) const
 {
-  auto search = slot_map_.find(p.surface_index());
-  if (search == slot_map_.end())
+  auto search = surface_slot_mapping_.find(p.surface_index());
+  if (search == surface_slot_mapping_.end())
     return;
 
   const int slot = search->second;
@@ -157,8 +161,8 @@ void SurfaceFETFilter::get_all_bins(
 #ifdef OPENMC_XDG_ENABLED
   const auto& history = p.xdg_prev_elements();
   if (!history.empty()) {
-    auto it = facet_map_.find(history.back());
-    if (it != facet_map_.end() && it->second >= surface_first_[slot] &&
+    auto it = xdg_face_to_fet_element_mapping_.find(history.back());
+    if (it != xdg_face_to_fet_element_mapping_.end() && it->second >= surface_first_[slot] &&
         it->second < surface_first_[slot + 1])
       e = it->second;
   }
@@ -188,7 +192,7 @@ int SurfaceFETFilter::element_from_bin(int bin) const
   return static_cast<int>(it - offsets_.begin()) - 1;
 }
 
-int SurfaceFETFilter::surface_slot_from_element(int facet) const
+int SurfaceFETFilter::surface_slot_mapping_from_element(int facet) const
 {
   auto it =
     std::upper_bound(surface_first_.begin(), surface_first_.end(), facet);
@@ -245,7 +249,7 @@ void SurfaceFETFilter::to_statepoint(hid_t filter_group) const
 std::string SurfaceFETFilter::text_label(int bin) const
 {
   int e = element_from_bin(bin);
-  int slot = surface_slot_from_element(e);
+  int slot = surface_slot_mapping_from_element(e);
   const auto& element = *elements_[e];
   auto mode = element.mode(bin - offsets_[e]);
   return fmt::format("Surface {}, facet {}, FET mode ({}, {})",

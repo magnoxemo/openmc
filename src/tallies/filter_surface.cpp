@@ -17,10 +17,9 @@ void SurfaceFilter::from_xml(pugi::xml_node node)
   // Convert surface IDs to indices of the global surfaces vector.
   for (auto& s : surfaces) {
     auto search = model::surface_map.find(s);
-    if (search == model::surface_map.end()) {
+    if (search == model::surface_map.end())
       throw std::runtime_error {
         fmt::format("Could not find surface {} specified on tally filter.", s)};
-    }
 
     s = search->second;
   }

@@ -101,19 +101,29 @@ private:
   //! Indices of the filtered surfaces in model::surfaces
   vector<int32_t> surfaces_;
 
-  //! Map from a surface index to its position in surfaces_
-  std::unordered_map<int32_t, int> slot_map_;
+  //! Maps a surface index in model::surfaces to its position (slot) in surfaces_
+  //! Used as a quick check of whether the crossed surface is one of the
+  //! filtered surfaces. The slot also bounds that surface's facets
+  //! through surface_first_.
+  std::unordered_map<int32_t, int> surface_slot_mapping_;
 
-  //! Map from the XDG ID of a facet to its index in elements_
-  std::unordered_map<int32_t, int> facet_map_;
+  //! Maps an XDG face ID to the index of that face's FET element in elements_
+  std::unordered_map<int32_t, int> xdg_face_to_fet_element_mapping_;
 
   //! First facet of each surface of surfaces_ (size n_surfaces + 1)
   vector<int> surface_first_;
 
-  vector<unique_ptr<fet::FETElement>> elements_; //!< Facet of each index
-  vector<int> offsets_; //!< First bin of each facet (size n+1)
-  int max_order_ {-1};  //!< Maximum order over all facets and axes
-  int order_ {0};       //!< Order given to newly built facets
+  //!< Facet of each index
+  vector<unique_ptr<fet::FETElement>> elements_;
+
+  //!< First bin of each facet (size n+1)
+  vector<int> offsets_;
+
+  //!< Maximum order over all facets and axes
+  int max_order_ {-1};
+
+  //!< Order given to newly built facets
+  int order_ {0};
 };
 
 } // namespace openmc

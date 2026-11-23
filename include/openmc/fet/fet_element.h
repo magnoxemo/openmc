@@ -196,7 +196,11 @@ private:
   Position normal_;               //!< Unit normal (B - A) x (C - A)
   Position e0_;                   //!< A - C
   Position e1_;                   //!< B - C
-  std::array<double, 4> ginv_ {}; //!< Row-major inverse of the Gram matrix
+
+  //! Row-major inverse of the Gram matrix G = [e0.e0, e0.e1; e0.e1, e1.e1].
+  //!It is precomputed because it depends only on the geometry and reference_coords
+  //! runs on every scoring event.
+  std::array<double, 4> ginv_ {};
 };
 
 //! Create the 2D element of a face of a mesh from its vertices, ordered so that
