@@ -140,6 +140,15 @@ int FETElement::eval(Position r, double* psi) const
   return n;
 }
 
+std::string FETElement::mode_label(int index) const
+{
+  const Orders m = mode(index);
+  std::string degrees = std::to_string(m[0]);
+  for (int d = 1; d < dim_; ++d)
+    degrees += fmt::format(", {}", m[d]);
+  return fmt::format("FET mode ({})", degrees);
+}
+
 double FETElement::reconstruct(Position r, const double* moments) const
 {
   const int n = n_modes();
@@ -397,6 +406,12 @@ double QuadElement::mode_norm_sq(int index) const
 {
   const int set = index / tensor_n_modes(dim(), orders());
   return tensor_norm_sq(dim(), QUAD_BETA[set], mode(index));
+}
+
+std::string QuadElement::mode_label(int index) const
+{
+  const int set = index / tensor_n_modes(dim(), orders());
+  return fmt::format("{}, set {}", FETElement::mode_label(index), set);
 }
 
 void QuadElement::eval_modes(const double* xi, double* psi) const

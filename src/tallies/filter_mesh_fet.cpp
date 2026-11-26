@@ -167,7 +167,6 @@ double MeshFETFilter::reconstruct(
 void MeshFETFilter::to_statepoint(hid_t filter_group) const
 {
   MeshFilter::to_statepoint(filter_group);
-  write_dataset(filter_group, "basis", "legendre_jacobi_duffy");
   write_dataset(filter_group, "normalized", 0);
 
   // First filter bin of each element (size n_elements + 1). Excluded elements
@@ -177,6 +176,8 @@ void MeshFETFilter::to_statepoint(hid_t filter_group) const
   if (elements_.empty())
     return;
   const fet::FETElement& shape = *elements_[0];
+
+  write_dataset(filter_group, "basis", shape.basis_name());
 
   // Exact vertices of each element, in the mesh frame (before the filter
   // translation/rotation is applied) and in cm. The last vertex is the one
@@ -215,13 +216,8 @@ std::string MeshFETFilter::text_label(int bin) const
 {
   int e = element_from_bin(bin);
   const auto& elem = *elements_[e];
-  auto mode = elem.mode(bin - offsets_[e]);
-  if (elem.dim() == 2) {
-    return fmt::format(
-      "{}, FET mode ({}, {})", MeshFilter::text_label(e), mode[0], mode[1]);
-  }
-  return fmt::format("{}, FET mode ({}, {}, {})", MeshFilter::text_label(e),
-    mode[0], mode[1], mode[2]);
+  return fmt::format("{}, {}", MeshFilter::text_label(e),
+    elem.mode_label(bin - offsets_[e]));
 }
 
 } // namespace openmc

@@ -214,10 +214,6 @@ void SurfaceFETFilter::to_statepoint(hid_t filter_group) const
     surface_ids.push_back(model::surfaces[s]->id_);
   write_dataset(filter_group, "bins", surface_ids);
 
-  write_dataset(filter_group, "basis",
-    !elements_.empty() && elements_[0]->n_vertices() == 4
-      ? "legendre_bilinear"
-      : "legendre_jacobi_duffy");
   write_dataset(filter_group, "normalized", 0);
 
   // First facet of each surface (size n_surfaces + 1) and first filter bin of
@@ -229,8 +225,10 @@ void SurfaceFETFilter::to_statepoint(hid_t filter_group) const
     return;
   const fet::FETElement& shape = *elements_[0];
 
-  // Exact vertices of each facet in cm. The last vertex is the one collapsed
-  // by the Duffy transform.
+  write_dataset(filter_group, "basis", shape.basis_name());
+
+  // Exact vertices of each facet in cm, in the order that defines the reference
+  // coordinates of the element
   size_t n_elem = elements_.size();
   size_t n_vert = shape.n_vertices();
   size_t dim = shape.dim();
@@ -260,10 +258,9 @@ std::string SurfaceFETFilter::text_label(int bin) const
   int e = element_from_bin(bin);
   int slot = surface_slot_from_element(e);
   const auto& element = *elements_[e];
-  auto mode = element.mode(bin - offsets_[e]);
-  return fmt::format("Surface {}, facet {}, FET mode ({}, {})",
-    model::surfaces[surfaces_[slot]]->id_, e - surface_first_[slot], mode[0],
-    mode[1]);
+  return fmt::format("Surface {}, facet {}, {}",
+    model::surfaces[surfaces_[slot]]->id_, e - surface_first_[slot],
+    element.mode_label(bin - offsets_[e]));
 }
 
 } // namespace openmc

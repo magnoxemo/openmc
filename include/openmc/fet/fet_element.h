@@ -2,6 +2,7 @@
 #define OPENMC_FET_FET_ELEMENT_H
 
 #include <array>
+#include <string>
 
 #include "openmc/bounding_box.h"
 #include "openmc/memory.h"
@@ -92,6 +93,13 @@ public:
   //! expansion on the element (see the element types)
   virtual double mode_norm_sq(int index) const = 0;
 
+  //! Name of the basis, written to the statepoint
+  virtual const char* basis_name() const = 0;
+
+  //! Description of a mode for tally labels. Override when the degrees do not
+  //! identify a mode.
+  virtual std::string mode_label(int index) const;
+
   //! Evaluate the unnormalized functions to score for all modes at a position
   //
   //! The reference coordinates are clamped to [-1, 1], which keeps points that
@@ -163,6 +171,10 @@ public:
   int n_vertices() const override { return 4; }
   const Position& vertex(int i) const override { return v_[i]; }
   const char* type() const override { return "tet4"; }
+  const char* basis_name() const override
+  {
+    return "legendre_jacobi_duffy";
+  }
   void reference_coords(Position r, double* xi) const override;
 
   int n_modes() const override;
@@ -198,6 +210,10 @@ public:
   int n_vertices() const override { return 3; }
   const Position& vertex(int i) const override { return v_[i]; }
   const char* type() const override { return "tri3"; }
+  const char* basis_name() const override
+  {
+    return "legendre_jacobi_duffy";
+  }
   void reference_coords(Position r, double* xi) const override;
 
   int n_modes() const override;
@@ -259,11 +275,16 @@ public:
   int n_vertices() const override { return 4; }
   const Position& vertex(int i) const override { return vertices_[i]; }
   const char* type() const override { return "quad4"; }
+  const char* basis_name() const override
+  {
+    return "legendre_jacobi_split";
+  }
   void reference_coords(Position r, double* xi) const override;
 
   int n_modes() const override;
   Orders mode(int index) const override;
   double mode_norm_sq(int index) const override;
+  std::string mode_label(int index) const override;
 
 protected:
   void eval_modes(const double* xi, double* psi) const override;
