@@ -94,11 +94,17 @@ void SurfaceFETFilter::build_facets(int32_t surface_index)
 
   for (const auto face : faces) {
     const auto coords = mesh_manager.face_vertex_coordinates(face);
-    if (coords.size() != 3) {
+    if (coords.size() != 3 && coords.size() != 4) {
       fatal_error(fmt::format(
         "Surface {} on surface FET filter {} has a facet with {} vertices; "
-        "only triangular facets are supported.",
+        "only triangular and quadrilateral facets are supported.",
         model::surfaces[surface_index]->id_, id(), coords.size()));
+    }
+    if (!elements_.empty() &&
+        static_cast<std::size_t>(elements_[0]->n_vertices()) != coords.size()) {
+      fatal_error(fmt::format(
+        "Surface FET filter {} mixes triangular and quadrilateral facets.",
+        id()));
     }
 
     vector<Position> vertices;
@@ -192,7 +198,7 @@ int SurfaceFETFilter::element_from_bin(int bin) const
   return static_cast<int>(it - offsets_.begin()) - 1;
 }
 
-int SurfaceFETFilter::surface_slot_mapping_from_element(int facet) const
+int SurfaceFETFilter::surface_slot_from_element(int facet) const
 {
   auto it =
     std::upper_bound(surface_first_.begin(), surface_first_.end(), facet);
@@ -208,7 +214,10 @@ void SurfaceFETFilter::to_statepoint(hid_t filter_group) const
     surface_ids.push_back(model::surfaces[s]->id_);
   write_dataset(filter_group, "bins", surface_ids);
 
-  write_dataset(filter_group, "basis", "legendre_jacobi_duffy");
+  write_dataset(filter_group, "basis",
+    !elements_.empty() && elements_[0]->n_vertices() == 4
+      ? "legendre_bilinear"
+      : "legendre_jacobi_duffy");
   write_dataset(filter_group, "normalized", 0);
 
   // First facet of each surface (size n_surfaces + 1) and first filter bin of
@@ -249,7 +258,7 @@ void SurfaceFETFilter::to_statepoint(hid_t filter_group) const
 std::string SurfaceFETFilter::text_label(int bin) const
 {
   int e = element_from_bin(bin);
-  int slot = surface_slot_mapping_from_element(e);
+  int slot = surface_slot_from_element(e);
   const auto& element = *elements_[e];
   auto mode = element.mode(bin - offsets_[e]);
   return fmt::format("Surface {}, facet {}, FET mode ({}, {})",

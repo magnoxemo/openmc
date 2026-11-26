@@ -22,10 +22,8 @@ namespace openmc {
 //! Facets are numbered surface after surface, in the order of the surfaces of
 //! the filter; the facets of a surface are in the order of the XDG mesh
 //! manager. The weight of a bin is the value of the unnormalized mode at the
-//! crossing point, as for MeshFETFilter, so with the squared mode norm N_i^2
-//! the reconstructed distribution on facet e is
-//!
-//!   f(r) = sum_i N_i^2 * (tally in bin offset(e) + i) * psi_i(r) / area_e
+//! crossing point, as for MeshFETFilter. The distribution on a facet is
+//! obtained from the tally values of its bins with reconstruct().
 //!
 //! The filter only locates the facet and weights the bins. The scoring of
 //! surface tallies (net current or surface-crossing flux, including the sign of
@@ -83,6 +81,18 @@ public:
 
   //! Facet element, e.g. to change its orders; call update_bins() afterwards
   fet::FETElement& element(int facet) { return *elements_[facet]; }
+
+  //! Reconstruct the expanded distribution on a facet
+  //
+  //! \param[in] facet Facet index
+  //! \param[in] r Position in global coordinates
+  //! \param[in] values Tally values of the facet's bins, i.e. the entries
+  //!   [offset(facet), offset(facet + 1)) of the filter
+  //! \return Distribution per unit area at r
+  double reconstruct(int facet, Position r, const double* values) const
+  {
+    return elements_[facet]->reconstruct(r, values);
+  }
 
   //! Facet containing a filter bin
   int element_from_bin(int bin) const;

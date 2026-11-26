@@ -25,27 +25,16 @@ constexpr int MAX_MODES {(MAX_ORDER + 1) * (MAX_ORDER + 1) * (MAX_ORDER + 1)};
 //! dimension of an element are ignored.
 using Orders = std::array<int, MAX_DIM>;
 
-//! Crossing of a line segment with a 2D element
-struct SegmentHit {
-  double t {0.0};       //!< Segment parameter of the crossing, in (0, 1]
-  Position point;       //!< Crossing point
-  double cosine {0.0};  //!< Cosine between the segment and the element normal
-};
-
 //==============================================================================
 //! One element of a functional expansion tally, holding both its geometry and
 //! its expansion functions.
 //!
 //! An element has dim() reference coordinates xi, each in [-1, 1], and an
-//! expansion order p_d along each axis d. A mode (m_0, ..., m_{dim-1}) is the
-//! tensor product of P_{m_d}^(0, beta_d)(xi_d) with 0 <= m_d <= p_d, where
-//! beta_d is the Jacobi parameter of axis d. The subclass picks the betas so
-//! that they match the Jacobian of its map to the reference cube, which makes
-//! the modes orthogonal on the element. The modes are numbered
-//! lexicographically with the last axis fastest, e.g. in 3D
-//! index = (i * (p_1 + 1) + j) * (p_2 + 1) + k, so the numbering depends on
-//! the orders. The orders are 0 on every axis until set; a negative order on
-//! any axis leaves the element without modes.
+//! expansion order p_d along each axis d. The basis is defined entirely by the
+//! element type: how many modes the orders give, how they are numbered, how
+//! they are normalized and how they are evaluated. The orders are 0 on every
+//! axis until set; a negative order on any axis leaves the element without
+//! modes.
 //==============================================================================
 
 class FETElement {
@@ -67,26 +56,8 @@ public:
   //! Axis-aligned bounding box of the vertices
   BoundingBox bounding_box() const;
 
-  //! Crossing of a line segment with the element
-  //
-  //! Only 2D elements embedded in 3D (surface elements) can be crossed. The
-  //! normal of such an element follows the right-hand rule on its vertex
-  //! order. The segment is p0 + t d with t in (0, 1]: a crossing at t = 0 does
-  //! not count and one at t = 1 does, so that consecutive segments of a
-  //! trajectory never count the same crossing twice. Segments parallel to the
-  //! element do not cross it.
-  //
-  //! \param[in] p0 Start of the segment
-  //! \param[in] d Displacement from the start to the end of the segment
-  //! \param[out] hit Crossing, if there is one
-  //! \return Whether the segment crosses the element
-  virtual bool intersect(Position p0, Position d, SegmentHit& hit) const;
-
   //! Number of reference coordinates
   int dim() const { return dim_; }
-
-  //! Jacobi parameter beta of reference axis d
-  int beta(int d) const { return beta_[d]; }
 
   //! Unsigned volume in dim() dimensions, i.e. area for a 2D element
   double volume() const { return volume_; }
@@ -111,18 +82,17 @@ public:
   //! Largest order over the reference axes
   int max_order() const;
 
-  //! Number of modes, prod_d (p_d + 1); 0 if any order is negative
-  int n_modes() const;
+  //! Number of modes at the current orders
+  virtual int n_modes() const = 0;
 
   //! Per-axis degrees of a mode. Entries at and beyond dim() are 0.
-  Orders mode(int index) const;
+  virtual Orders mode(int index) const = 0;
 
-  //! Squared normalization N^2 = prod_d (2 m_d + beta_d + 1) / (beta_d + 1)
-  //! of a mode. Multiplying a mode by N gives the basis with integral
-  //! psi_i psi_j = volume * delta_ij.
-  double mode_norm_sq(int index) const;
+  //! Squared normalization N^2 of a mode, which multiplies its moment in the
+  //! expansion on the element (see the element types)
+  virtual double mode_norm_sq(int index) const = 0;
 
-  //! Evaluate all unnormalized modes at a position
+  //! Evaluate the unnormalized functions to score for all modes at a position
   //
   //! The reference coordinates are clamped to [-1, 1], which keeps points that
   //! lie marginally outside the element (roundoff) finite.
@@ -132,15 +102,40 @@ public:
   //! \return Number of modes written
   int eval(Position r, double* psi) const;
 
+  //! Value of the expansion on the element,
+  //! f = sum_i N_i^2 moments_i P_i / volume
+  //! where P_i are the expansion functions, which need not be the functions
+  //! eval() returns. The reference coordinates are clamped as in eval().
+  //
+  //! \param[in] r Position in the frame of the vertices
+  //! \param[in] moments Array of n_modes() values, the integrals over the
+  //!   element of f times the functions of eval()
+  //! \return f at r, per unit volume; 0 if there are no modes
+  double reconstruct(Position r, const double* moments) const;
+
 protected:
-  FETElement(int dim, std::array<int, MAX_DIM> beta) : dim_ {dim}, beta_ {beta}
-  {}
+  explicit FETElement(int dim) : dim_ {dim} {}
+
+  //! Write the n_modes() values returned by eval() at reference coordinates
+  //! xi, which are not clamped
+  virtual void eval_modes(const double* xi, double* psi) const = 0;
+
+  //! Write the n_modes() expansion functions used by reconstruct() at reference
+  //! coordinates xi, which are not clamped. Override when they differ from the
+  //! functions of eval().
+  virtual void expansion_modes(const double* xi, double* values) const
+  {
+    eval_modes(xi, values);
+  }
+
+  //! Called after the orders change, for subclasses that cache anything that
+  //! depends on them
+  virtual void on_orders_changed() {}
 
   double volume_ {0.0};
 
 private:
   int dim_;
-  std::array<int, MAX_DIM> beta_;
   Orders orders_ {}; //!< Expansion order along each reference axis
 };
 
@@ -152,7 +147,13 @@ private:
 //! through the Duffy collapse, D first:
 //!   xi_0 = (lb - la) / s2,   xi_1 = (2 s2 - s3) / s3,   xi_2 = 1 - 2 ld
 //! with s2 = la + lb and s3 = la + lb + lc. A coordinate whose denominator
-//! vanishes is set to 0. The Jacobi parameters are beta = (0, 1, 2).
+//! vanishes is set to 0.
+//!
+//! A mode (i, j, k) is P_i(xi_0) P_j^(0,1)(xi_1) P_k^(0,2)(xi_2) with
+//! 0 <= m_d <= p_d. The Jacobi parameters match the Jacobian of the collapse, so
+//! the modes are orthogonal on the element. They are numbered
+//! lexicographically with the last axis fastest,
+//! index = (i * (p_1 + 1) + j) * (p_2 + 1) + k.
 //==============================================================================
 
 class TetElement final : public FETElement {
@@ -163,6 +164,13 @@ public:
   const Position& vertex(int i) const override { return v_[i]; }
   const char* type() const override { return "tet4"; }
   void reference_coords(Position r, double* xi) const override;
+
+  int n_modes() const override;
+  Orders mode(int index) const override;
+  double mode_norm_sq(int index) const override;
+
+protected:
+  void eval_modes(const double* xi, double* psi) const override;
 
 private:
   std::array<Position, 4> v_;
@@ -177,8 +185,10 @@ private:
 //! the vertices (A, B, C) give the reference coordinates through the Duffy
 //! collapse, C first:
 //!   xi_0 = (lb - la) / s2,   xi_1 = 1 - 2 lc
-//! with s2 = la + lb. xi_0 is set to 0 when s2 vanishes. The Jacobi
-//! parameters are beta = (0, 1).
+//! with s2 = la + lb. xi_0 is set to 0 when s2 vanishes.
+//!
+//! A mode (i, j) is P_i(xi_0) P_j^(0,1)(xi_1) with 0 <= m_d <= p_d. These are
+//! orthogonal on the element. They are numbered index = i * (p_1 + 1) + j.
 //==============================================================================
 
 class TriElement final : public FETElement {
@@ -189,11 +199,16 @@ public:
   const Position& vertex(int i) const override { return v_[i]; }
   const char* type() const override { return "tri3"; }
   void reference_coords(Position r, double* xi) const override;
-  bool intersect(Position p0, Position d, SegmentHit& hit) const override;
+
+  int n_modes() const override;
+  Orders mode(int index) const override;
+  double mode_norm_sq(int index) const override;
+
+protected:
+  void eval_modes(const double* xi, double* psi) const override;
 
 private:
   std::array<Position, 3> v_;
-  Position normal_;               //!< Unit normal (B - A) x (C - A)
   Position e0_;                   //!< A - C
   Position e1_;                   //!< B - C
 
@@ -201,6 +216,80 @@ private:
   //!It is precomputed because it depends only on the geometry and reference_coords
   //! runs on every scoring event.
   std::array<double, 4> ginv_ {};
+};
+
+//==============================================================================
+//! Bilinear quadrilateral embedded in 3D, for surface tallies. It must be
+//! planar and strictly convex, with the vertices (A, B, C, D) ordered around
+//! its boundary.
+//!
+//! The reference coordinates are those of the bilinear map
+//!   r(xi_0, xi_1) = r0 + u xi_0 + v xi_1 + w xi_0 xi_1
+//! with the vertex average r0 and
+//!   u = (-A + B + C - D) / 4,  v = (-A - B + C + D) / 4,
+//!   w = ( A - B + C - D) / 4,
+//! so that A is at (-1, -1), B at (1, -1), C at (1, 1) and D at (-1, 1). A
+//! position is projected orthogonally onto the plane of the quadrilateral
+//! before the map is inverted.
+//!
+//! The vertices are rotated (keeping their orientation) so that A is a corner
+//! with the smallest Jacobian determinant. The determinant then splits into
+//! three non-negative parts,
+//!   |J| = J_0 + J_1 + J_2
+//!       = c0 + j1 (1 + xi_0) + j2 (1 + xi_1),
+//! and there is one set of modes (i, j) per part, with 0 <= m_d <= p_d,
+//!   set 0: P_i(xi_0)       P_j(xi_1)
+//!   set 1: P_i^(0,1)(xi_0) P_j(xi_1)
+//!   set 2: P_i(xi_0)       P_j^(0,1)(xi_1)
+//! Each set is orthogonal with respect to its own part J_k. The sets are stored
+//! one after the other, index = k * (p_0 + 1) * (p_1 + 1) + i * (p_1 + 1) + j.
+//!
+//! eval() returns the modes weighted by J_k / |J|, so that scoring them over the
+//! element gives the moments a = integral of f P J_k over the reference square.
+//! reconstruct() uses the polynomials P without that weight,
+//!   f = sum over all modes of N^2 a P / area,
+//! which is exact if f is a polynomial within the orders. All three sets exist
+//! even where a part vanishes (j1 = j2 = 0 for a parallelogram).
+//==============================================================================
+
+class QuadElement final : public FETElement {
+public:
+  explicit QuadElement(const vector<Position>& vertices);
+
+  int n_vertices() const override { return 4; }
+  const Position& vertex(int i) const override { return vertices_[i]; }
+  const char* type() const override { return "quad4"; }
+  void reference_coords(Position r, double* xi) const override;
+
+  int n_modes() const override;
+  Orders mode(int index) const override;
+  double mode_norm_sq(int index) const override;
+
+protected:
+  void eval_modes(const double* xi, double* psi) const override;
+  void expansion_modes(const double* xi, double* values) const override;
+
+private:
+  std::array<Position, 4> vertices_;
+
+  // Coefficients of the bilinear map
+  Position center_; //!< r0
+  Position u_;
+  Position v_;
+  Position w_;
+
+  // Parts of the Jacobian determinant
+  double c0_;
+  double j1_;
+  double j2_;
+
+  // With x = r - r0 and p ^ q = n . (p x q) for the unit normal n, xi_0 solves
+  // k2 xi_0^2 + k1 xi_0 - x ^ v = 0, where k2 = u ^ w and k1 = u ^ v - x ^ w.
+  // The parts that depend only on the geometry are precomputed.
+  double k2_;
+  double k1_center_; //!< u ^ v, the value of k1 at r0
+  Position k1_grad_; //!< n x w, so that k1 = k1_center + x . k1_grad
+  Position k0_grad_; //!< v x n, so that x ^ v = x . k0_grad
 };
 
 //! Create the 2D element of a face of a mesh from its vertices, ordered so that

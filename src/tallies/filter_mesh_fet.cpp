@@ -161,12 +161,7 @@ int MeshFETFilter::evaluate_basis(int element, Position r, double* psi) const
 double MeshFETFilter::reconstruct(
   int element, Position r, const double* values) const
 {
-  double psi[fet::MAX_MODES];
-  int n = evaluate_basis(element, r, psi);
-  double f = 0.0;
-  for (int i = 0; i < n; ++i)
-    f += elements_[element]->mode_norm_sq(i) * values[i] * psi[i];
-  return f / elements_[element]->volume();
+  return elements_[element]->reconstruct(mesh_position(r), values);
 }
 
 void MeshFETFilter::to_statepoint(hid_t filter_group) const
